@@ -1,0 +1,85 @@
+# PPTX 自动生成 Agent
+
+根据指定目录里的提示素材（`txt / csv / pdf / png`），**自主提炼核心内容、决定主题与版式**，自动生成 **PowerPoint 可直接打开、可直接编辑** 的 `.pptx`。
+
+## 功能特性
+
+- **多格式输入**：`txt`（含 markdown 标题/要点）、`csv`（自动识别数值列）、`pdf`（文字 + 表格 + 内嵌图片）、`png/jpg`（图片，可选 OCR）
+- **内容提炼**：归一化所有素材 → 自动分页、提炼要点、识别总结/结论小节
+- **自主决策**
+  - 主题：按内容关键词自动匹配配色（科技蓝 / 商务金 / 健康绿 / 教育橙 / 自然青 / 金融墨 / 简约灰 / 现代靛），也可 `--theme` 强制指定
+  - 版式：封面 → 目录 → 章节页 → 要点页 / 表格页 / 原生图表页 / 图片画廊 → 总结页 → 感谢页
+- **可编辑输出**：文本、表格、图表全部是 PowerPoint **原生对象**（图表双击即可改数据），16:9 版式
+- **可选 LLM 增强**：设置 `OPENAI_API_KEY` 后可用 `--llm` 让大模型规划大纲（兼容 OpenAI / DeepSeek / 本地 Ollama 等兼容端点）
+
+## 安装
+
+```bash
+pip install -r requirements.txt
+```
+
+## 使用
+
+```bash
+# 1) 最简用法：把素材放到 input 目录，自动生成
+python main.py --input input -o output/deck.pptx
+
+# 2) 指定标题/副标题/作者/主题
+python main.py --input examples/sample_data -o output/demo.pptx \
+    --title "季度经营汇报" --subtitle "2026 Q3" --author "张三" --theme business
+
+# 3) 使用 LLM 规划大纲（需先设置 OPENAI_API_KEY）
+set OPENAI_API_KEY=sk-xxx
+python main.py --input input -o output/deck.pptx --llm
+```
+
+> 也可以切换到其它兼容端点，例如 DeepSeek：
+> ```bash
+> set OPENAI_API_KEY=sk-deepseek-xxx
+> set OPENAI_BASE_URL=https://api.deepseek.com/v1
+> set OPENAI_MODEL=deepseek-chat
+> python main.py --input input -o output/deck.pptx --llm
+> ```
+
+## 示例
+
+```bash
+python scripts/make_samples.py      # 生成示例素材（txt/csv 已内置，png/pdf 由脚本生成）
+python main.py --input examples/sample_data -o output/demo.pptx
+```
+
+打开 `output/demo.pptx` 即可看到自动生成的完整演示文稿。
+
+## 目录结构
+
+```
+pptx-autogen-agent/
+├── main.py                 # 命令行入口
+├── config.py               # 默认路径 + 主题预设
+├── requirements.txt
+├── src/
+│   ├── parsers.py          # txt/csv/pdf/png -> 内容块
+│   ├── analyzer.py         # 内容分析 + 版面规划
+│   ├── theme_engine.py     # 关键词 -> 主题
+│   ├── renderer.py         # python-pptx 渲染
+│   └── llm_advisor.py      # 可选 LLM 大纲
+├── scripts/make_samples.py # 生成示例素材
+├── examples/sample_data/   # 示例素材
+└── output/                 # 生成结果
+```
+
+## 支持的素材与识别规则
+
+| 素材 | 识别内容 |
+| ---- | -------- |
+| `txt` | `#` 标题、`-/*/•` 要点、`1.` 编号、普通段落、轻量标题启发式 |
+| `csv` | 表格；含数值列时自动生成原生图表 |
+| `pdf` | 文字、表格、内嵌图片（PyMuPDF 抽取） |
+| `png/jpg` | 图片直接入页；安装 `pytesseract` 后可 OCR 提取文字 |
+
+## 常见问题
+
+- **打不开？** 生成的是标准 OOXML `.pptx`，PowerPoint 2007+ / WPS 均可直接打开编辑。
+- **想换主题？** `python main.py --help` 查看 `--theme` 可选值。
+- **想用本地模型？** 设置 `OPENAI_BASE_URL` 指向本地 OpenAI 兼容服务（如 Ollama）即可。
+- **中文字体**：默认使用「微软雅黑」，可在 `config.py` 或渲染器中调整。
