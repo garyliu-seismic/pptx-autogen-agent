@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 import config
 from .models import Block, DeckPlan, SlideData
@@ -21,6 +22,56 @@ from .theme_engine import pick_theme
 BULLETS_PER_SLIDE = 6
 SUMMARY_KEYWORDS = ["总结", "结论", "展望", "下一步", "行动项",
                     "summary", "conclusion", "next steps", "action items"]
+
+# 时间轴特征：第1周 / 第 2 阶段 / Step 3 / Phase 2 ...
+_TIMELINE_RE = re.compile(
+    r"第\s*\d+\s*(周|天|月|步|阶段|期|季度)|(?:step|phase|stage)\s*\d+",
+    re.IGNORECASE)
+
+
+def _refine_kind(sd: SlideData) -> SlideData:
+    """根据内容特征自动升级版式：bullets -> 卡片 / 时间轴。"""
+    if sd.kind != "bullets":
+        return sd
+    items = [b for b in sd.bullets if b.strip()]
+    if not items:
+        return sd
+    # 分阶段/里程碑 -> 时间轴
+    if len(items) <= 6 and any(_TIMELINE_RE.search(it) for it in items):
+        sd.kind = "timeline"
+        return sd
+    # 2~4 条短要点 -> 卡片
+    if 2 <= len(items) <= 4 and all(len(it) <= 26 for it in items):
+        sd.kind = "cards"
+        return sd
+    return sd
+
+
+def _split_long(text: str, max_len: int = 80) -> list[str]:
+    """把超长文本按句子/逗号切分成多条短要点，防止排版溢出、提升可读性。"""
+    text = text.strip()
+    if len(text) <= max_len:
+        return [text]
+    sentences = [s for s in re.split(r"(?<=[。！？.!?])", text) if s.strip()]
+    pieces: list[str] = []
+    buf = ""
+    for s in sentences:
+        if not buf:
+            buf = s
+        elif len(buf) + len(s) <= max_len:
+            buf += s
+        else:
+            pieces.append(buf)
+            buf = s
+        while len(buf) > max_len:
+            cut = max(buf.rfind("，"), buf.rfind(","))
+            if cut <= 0:
+                cut = max_len
+            pieces.append(buf[:cut + 1])
+            buf = buf[cut + 1:]
+    if buf:
+        pieces.append(buf)
+    return [p.strip() for p in pieces if p.strip()]
 
 
 # ---------------------------------------------------------------------------
@@ -32,6 +83,9 @@ def build_deck(blocks: list[Block], title: str = "", subtitle: str = "",
     if not title:
         title = _guess_title(blocks)
 
+    # 提取“图解说明”小节（标题含“图解/Figure”，后跟要点），供图片配对成图文页
+    blocks, figure_specs = _extract_figures(blocks)
+
     slides: list[SlideData] = [SlideData(title=title, kind="title",
                                          notes=f"主题配色：{theme.name}")]
 
@@ -39,7 +93,7 @@ def build_deck(blocks: list[Block], title: str = "", subtitle: str = "",
     sec_heads = [b for b in blocks if b.kind == "heading" and b.level >= 2]
     use_dividers = 2 <= len(sec_heads) <= 6
 
-    content_slides = _plan_content(blocks, use_dividers)
+    content_slides = _plan_content(blocks, use_dividers, figure_specs)
 
     # 目录页
     if len(content_slides) >= 3:
@@ -65,15 +119,65 @@ def build_deck(blocks: list[Block], title: str = "", subtitle: str = "",
 # ---------------------------------------------------------------------------
 # 正文规划
 # ---------------------------------------------------------------------------
-def _plan_content(blocks: list[Block], use_dividers: bool) -> list[SlideData]:
+def _norm_figure(s: str) -> str:
+    """规范化图片/标题名用于配对：去掉“图解/图_/图”等前缀与空格标点，转小写。"""
+    t = s.replace("图解", "").replace("图_", "").replace("图-", "").replace("图", "")
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]", "", t.lower())
+
+
+def _extract_figures(blocks: list[Block]) -> tuple[list[Block], list[tuple]]:
+    """提取“图解说明”小节（标题含 图解/Figure，后跟要点），从正文中移除并返回说明。
+
+    返回 (剩余 blocks, [(key, 标题, [要点...], 一句话结论)])；key 用于与图片文件名配对。
+    """
+    figs: list[tuple] = []
+    out: list[Block] = []
+    i, n = 0, len(blocks)
+    while i < n:
+        b = blocks[i]
+        if (b.kind == "heading"
+                and ("图解" in b.text or "figure" in b.text.lower())):
+            points: list[str] = []
+            takeaway = ""
+            j = i + 1
+            while j < n and blocks[j].kind != "heading":
+                if blocks[j].kind == "bullets":
+                    points.extend(blocks[j].bullets)
+                elif blocks[j].text:
+                    t = blocks[j].text.strip()
+                    if t:
+                        takeaway = t if not takeaway else takeaway + " " + t
+                j += 1
+            if points:
+                title = re.sub(r"^图解\s*", "", b.text).strip()
+                figs.append((_norm_figure(b.text), title, points, takeaway))
+                i = j          # 跳过说明内容，避免重复成普通页
+                continue
+        out.append(b)
+        i += 1
+    return out, figs
+
+
+def _plan_content(blocks: list[Block], use_dividers: bool,
+                  figure_specs: list[tuple] | None = None) -> list[SlideData]:
+    """把 blocks 组织成正文幻灯片；图片优先配对成图文页(figure)，其余进画廊(gallery)。"""
+    figure_specs = figure_specs or []
+    fig_map = {key: (title, points, takeaway)
+               for key, title, points, takeaway in figure_specs}
     slides: list[SlideData] = []
     cur: SlideData | None = None
+    gallery: SlideData | None = None
 
     def flush() -> None:
-        nonlocal cur
+        nonlocal cur, gallery
         if cur is not None:
-            slides.append(cur)
+            # 空的“要点页”不生成（内容可能已被提取成图文页/图表等）
+            if not (cur.kind == "bullets" and not cur.bullets):
+                slides.append(_refine_kind(cur))
             cur = None
+        if gallery is not None and gallery.images:
+            slides.append(gallery)
+            gallery = None
 
     for b in blocks:
         if b.kind == "heading":
@@ -94,10 +198,11 @@ def _plan_content(blocks: list[Block], use_dividers: bool) -> list[SlideData]:
                 it = (it or "").strip()
                 if not it:
                     continue
-                if len(cur.bullets) >= BULLETS_PER_SLIDE:
-                    flush()
-                    cur = SlideData(title="要点 Highlights", kind="bullets")
-                cur.bullets.append(it)
+                for piece in _split_long(it):
+                    if len(cur.bullets) >= BULLETS_PER_SLIDE:
+                        flush()
+                        cur = SlideData(title="要点 Highlights", kind="bullets")
+                    cur.bullets.append(piece)
 
         elif b.kind == "table":
             flush()
@@ -118,12 +223,19 @@ def _plan_content(blocks: list[Block], use_dividers: bool) -> list[SlideData]:
                 notes="原生图表，可在 PowerPoint 中直接编辑"))
 
         elif b.kind == "image":
-            if slides and slides[-1].kind == "gallery" and len(slides[-1].images) < 4:
-                slides[-1].images.append(b.image_path)
-            else:
+            key = _norm_figure(os.path.splitext(os.path.basename(b.image_path))[0])
+            if key in fig_map:
                 flush()
-                slides.append(SlideData(title="图片 / Images", kind="gallery",
-                                        images=[b.image_path]))
+                title, points, takeaway = fig_map[key]
+                slides.append(SlideData(title=title, kind="figure",
+                                        images=[b.image_path], bullets=points,
+                                        takeaway=takeaway,
+                                        notes="图文讲解页"))
+            else:
+                if gallery is None:
+                    gallery = SlideData(title="图解与图片 / Diagrams & Images",
+                                        kind="gallery", images=[])
+                gallery.images.append(b.image_path)
 
     flush()
     return slides

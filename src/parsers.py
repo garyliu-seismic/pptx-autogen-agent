@@ -97,6 +97,12 @@ def _parse_txt(path: str) -> list[Block]:
 # ---------------------------------------------------------------------------
 # csv
 # ---------------------------------------------------------------------------
+def _csv_title(base: str) -> str:
+    """把文件名转成友好标题：去掉开头数字序号/下划线。"""
+    name = re.sub(r"^\d+[_\-]?\s*", "", base).strip()
+    return name or base
+
+
 def _parse_csv(path: str) -> list[Block]:
     with open(path, "r", encoding="utf-8-sig", errors="ignore", newline="") as f:
         rows = [r for r in csv.reader(f) if any(c.strip() for c in r)]
@@ -108,7 +114,7 @@ def _parse_csv(path: str) -> list[Block]:
     # 单一块同时携带表格与(可能的)图表数据：
     # 含数值列 -> 分析器展示为“原生图表页(下方附数据表)”；纯文本 -> 表格页
     return [Block(source=path, kind="table", table=table, chart=table.to_chart(),
-                  text=base)]
+                  text=_csv_title(base))]
 
 
 # ---------------------------------------------------------------------------

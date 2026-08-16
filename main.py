@@ -15,7 +15,7 @@ import config
 from src.analyzer import apply_suggestion, build_deck
 from src.llm_advisor import suggest
 from src.parsers import SUPPORTED_EXT, parse_file
-from src.renderer import render
+from src.quality import render_with_quality
 
 
 def collect_files(input_dir: str) -> list[str]:
@@ -43,6 +43,8 @@ def main() -> int:
                     help="强制指定主题（默认根据内容自动选择）")
     ap.add_argument("--llm", action="store_true",
                     help="调用 LLM 规划大纲（需设置 OPENAI_API_KEY）")
+    ap.add_argument("--preview", action="store_true",
+                    help="生成后用 LibreOffice 渲染每页 PNG 预览（需安装 LibreOffice）")
     args = ap.parse_args()
 
     if not os.path.isdir(args.input):
@@ -75,11 +77,24 @@ def main() -> int:
         else:
             print("[LLM] 未获得建议（无 Key 或调用失败），继续使用启发式规划。")
 
-    out = render(plan, args.output)
-    print(f"\n[完成] 已生成：{os.path.abspath(out)}")
+    out, issues, tries = render_with_quality(plan, args.output)
+    print(f"\n[完成] 已生成：{os.path.abspath(out)}（质检尝试 {tries} 次）")
     print(f"       共 {len(plan.slides)} 页，主题「{plan.theme_name}」，16:9")
     for i, s in enumerate(plan.slides, 1):
         print(f"       {i:02d}. [{s.kind:8}] {s.title}")
+    if issues:
+
+    if args.preview:
+        try:
+            from tools.render_preview import render_pipeline, print_install_hint
+            pages, contact = render_pipeline(out)
+            print(f"[预览] 已渲染 {len(pages)} 页 -> {os.path.dirname(pages[0])}")
+            if contact:
+                print(f"[预览] 总览图：{contact}")
+        except RuntimeError:
+            print_install_hint()
+        from src.quality import summary
+        print(f"       [提示] {summary(issues)}")
     return 0
 
 

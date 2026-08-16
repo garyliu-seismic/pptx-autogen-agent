@@ -79,6 +79,7 @@ class SlideData:
     chart: Optional[ChartData] = None
     images: list[str] = field(default_factory=list)
     notes: str = ""
+    takeaway: str = ""     # 一句话结论（图文页右下角）
     level: int = 0
 
 
