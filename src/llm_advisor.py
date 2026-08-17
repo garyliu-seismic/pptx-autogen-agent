@@ -12,6 +12,35 @@ import urllib.request
 from .models import Block
 
 
+def _load_dotenv(path: str | None = None) -> None:
+    """从项目根目录 .env 读取环境变量（不覆盖已存在的环境变量）。
+
+    支持 `KEY=value` 与带引号的值；忽略空行与 # 注释。
+    这样无需改系统环境变量，只需在 .env 里写 OPENAI_API_KEY 等即可。
+    """
+    if path is None:
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            ".env")
+    if not os.path.isfile(path):
+        return
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                k = k.strip()
+                v = v.strip().strip('"').strip("'")
+                if k and k not in os.environ:
+                    os.environ[k] = v
+    except Exception:
+        pass
+
+
+_load_dotenv()  # 模块导入即加载，保证 available()/chat_* 能看到 .env 配置
+
+
 def available() -> bool:
     return bool(os.environ.get("OPENAI_API_KEY"))
 
