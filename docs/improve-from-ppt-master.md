@@ -22,6 +22,28 @@
 
 ---
 
+## 今日进度（2026-08-17 会话小结）
+
+已实现并提交（本地 `main`，`ahead 6`，**待 push**）：
+
+| 阶段 | 提交 | 说明 |
+| --- | --- | --- |
+| P0 B/C | `6f5b60c` | 规划前校验 + 渲染后 LLM 修复闭环 + 主题 key / IndentationError 修复 |
+| 工具 | `aeed13f` | PIL PNG 预览（无 LibreOffice）+ 读回 QA 工具 |
+| P1 A/F | `ccd2b3d` | 工具调用式 planner + 上下文构建器/few-shot |
+| 配置 | `561cbf9` | `.env` 支持（DeepSeek 端点，key 已配在 `.env`） |
+| 修复 | `df24753` | planner 改带历史的多轮 function calling（真实 DeepSeek 已跑通） |
+| P2-D | `378762d` | 读回内容 QA + 空壳页自愈 |
+
+**明天继续：**
+- [ ] **P2-E**：`--plan-only` / `--plan plan.json` dry-run 计划确认（对应 master 的 dry-run → 用户确认 → 执行）
+- [ ] **P3-G**：`web_search` 内容增强（Wikipedia 中文 search API → summary，复用 master 思路；依赖 planner 工具框架）
+- [ ] **git push origin main**：本机 SSH 连 `172.188.121.113:22` 超时，网络恢复后执行
+- [ ] （可选）pytest 测试套件（本仓库还没有；其它项目均有）
+- [ ] （可选）把 `preview_png.py` 接进 `--preview`（LibreOffice 未装，作为内置预览通道）
+
+---
+
 ## 1. 两个项目定位对比
 
 | 维度 | ppt master（ppt-addin-claude-code） | 我们的 pptx-autogen-agent |
