@@ -77,9 +77,19 @@ def _split_long(text: str, max_len: int = 80) -> list[str]:
 # ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
+def _theme_key(theme) -> str:
+    """由 Theme 对象反查 config.THEMES 的 key（如 business），找不到用默认。"""
+    for k, v in config.THEMES.items():
+        if v is theme or v.name == theme.name:
+            return k
+    return config.DEFAULT_THEME
+
+
 def build_deck(blocks: list[Block], title: str = "", subtitle: str = "",
                author: str = "", theme_name: str = "") -> DeckPlan:
     theme = pick_theme(blocks, theme_name or None)
+    # 存主题 key（如 business）而非显示名（如 商务金），供 config.THEMES 索引
+    theme_key = theme_name if theme_name in config.THEMES else _theme_key(theme)
     if not title:
         title = _guess_title(blocks)
 
@@ -113,7 +123,7 @@ def build_deck(blocks: list[Block], title: str = "", subtitle: str = "",
     slides.append(SlideData(title="谢谢 / Thank You", kind="thanks"))
 
     return DeckPlan(title=title, subtitle=subtitle, author=author,
-                    theme_name=theme.name, slides=slides)
+                    theme_name=theme_key, slides=slides)
 
 
 # ---------------------------------------------------------------------------

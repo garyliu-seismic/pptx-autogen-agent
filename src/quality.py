@@ -141,8 +141,16 @@ def summary(issues: list[Issue]) -> str:
 
 
 def render_with_quality(plan: DeckPlan, output_path: str,
-                        max_tries: int = 4, quiet: bool = False) -> tuple[str, list[Issue], int]:
-    """渲染 + 质检 + 自动重排，返回 (输出路径, 最终问题列表, 尝试次数)。"""
+                        max_tries: int = 4, quiet: bool = False,
+                        repairer=None, repair_rounds: int = 0,
+                        max_repair_rounds: int = 2) -> tuple[str, list[Issue], int]:
+    """渲染 + 质检 + 自动重排，返回 (输出路径, 最终问题列表, 尝试次数)。
+
+    快路径：确定性参数调节（font/hpad/gap），最多 max_tries 次。
+    慢路径：参数调节仍无法消除严重问题、且传入 repairer 时，把具体 Issue
+    交给 repairer(plan, issues)（通常是 LLM 修复，见 llm_repair.py）返回新计划
+    后重新渲染；最多 max_repair_rounds 轮。
+    """
     from .renderer import render
 
     state = {"font": 1.0, "hpad": 0.0, "gap": 1.0}
@@ -179,6 +187,24 @@ def render_with_quality(plan: DeckPlan, output_path: str,
         state = {"font": max(0.72, state["font"] - 0.06),
                  "hpad": state["hpad"] + 0.12,
                  "gap": max(0.6, state["gap"] - 0.12)}
+
+    # 慢路径：确定性参数调节用尽仍有严重问题 -> 交给 repairer（通常为 LLM）
+    if repairer is not None and repair_rounds < max_repair_rounds:
+        critical = [i for i in final_issues
+                    if i.kind in ("overflow_x", "overflow_y", "overlap", "text_overflow")]
+        if critical:
+            if not quiet:
+                print(f"  [质检] 参数调节未消除排版问题，调用 LLM 修复"
+                      f"（第 {repair_rounds + 1}/{max_repair_rounds} 轮）…")
+            new_plan = repairer(plan, final_issues)
+            if new_plan is not None:
+                if not quiet:
+                    print("  [质检] 已采用修复后的计划，重新渲染…")
+                return render_with_quality(new_plan, output_path,
+                                           max_tries=max_tries, quiet=quiet,
+                                           repairer=repairer,
+                                           repair_rounds=repair_rounds + 1,
+                                           max_repair_rounds=max_repair_rounds)
 
     if not quiet:
         print(f"  [质检] 已达最大尝试 {max_tries} 次，采用当前结果。")

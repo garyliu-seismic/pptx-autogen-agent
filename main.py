@@ -14,8 +14,10 @@ import os
 import config
 from src.analyzer import apply_suggestion, build_deck
 from src.llm_advisor import suggest
+from src.llm_repair import repair_plan_with_llm, repair_render_with_llm
 from src.parsers import SUPPORTED_EXT, parse_file
 from src.quality import render_with_quality
+from src.validate_plan import repair_deterministic, validate_plan
 
 
 def collect_files(input_dir: str) -> list[str]:
@@ -45,6 +47,8 @@ def main() -> int:
                     help="调用 LLM 规划大纲（需设置 OPENAI_API_KEY）")
     ap.add_argument("--preview", action="store_true",
                     help="生成后用 LibreOffice 渲染每页 PNG 预览（需安装 LibreOffice）")
+    ap.add_argument("--no-plan-qa", action="store_true",
+                    help="跳过渲染前规划校验与修复（默认开启）")
     args = ap.parse_args()
 
     if not os.path.isdir(args.input):
@@ -77,12 +81,32 @@ def main() -> int:
         else:
             print("[LLM] 未获得建议（无 Key 或调用失败），继续使用启发式规划。")
 
-    out, issues, tries = render_with_quality(plan, args.output)
+    # Phase B：渲染前规划校验 + 修复（无 Key 时仅做确定性修复）
+    if not args.no_plan_qa:
+        pqa_issues = validate_plan(plan)
+        if pqa_issues:
+            print(f"[规划质检] 发现 {len(pqa_issues)} 项问题")
+            if args.llm:
+                repaired = repair_plan_with_llm(plan, pqa_issues)
+                if repaired is not None:
+                    plan = repaired
+                    print("[规划质检] 已用 LLM 修复问题页")
+                    pqa_issues = validate_plan(plan)
+            plan, nfixed = repair_deterministic(plan)
+            if nfixed:
+                print(f"[规划质检] 确定性修复 {nfixed} 项")
+        else:
+            print("[规划质检] 通过")
+
+    repairer = repair_render_with_llm if args.llm else None
+    out, issues, tries = render_with_quality(plan, args.output, repairer=repairer)
     print(f"\n[完成] 已生成：{os.path.abspath(out)}（质检尝试 {tries} 次）")
     print(f"       共 {len(plan.slides)} 页，主题「{plan.theme_name}」，16:9")
     for i, s in enumerate(plan.slides, 1):
         print(f"       {i:02d}. [{s.kind:8}] {s.title}")
     if issues:
+        from src.quality import summary
+        print(f"       [提示] {summary(issues)}")
 
     if args.preview:
         try:
@@ -93,8 +117,6 @@ def main() -> int:
                 print(f"[预览] 总览图：{contact}")
         except RuntimeError:
             print_install_hint()
-        from src.quality import summary
-        print(f"       [提示] {summary(issues)}")
     return 0
 
 
