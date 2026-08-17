@@ -13,12 +13,14 @@
 """
 from __future__ import annotations
 
+import json
+
 import config
-from .llm_advisor import _serialize, chat_json_tools
+from .llm_advisor import _serialize, chat_json_tools, chat_tools
 from .models import ChartData, DeckPlan, SlideData, TableData
 
 MAX_BULLETS = 6
-MAX_TURNS = 4
+MAX_TURNS = 6
 MAX_CHARS_INTOOL = 6000
 
 # ---------------------------------------------------------------------------
@@ -230,28 +232,92 @@ def finalize(plan: DeckPlan) -> bool:
     return True
 
 
+def _parse_text_tool_calls(content: str) -> list[dict]:
+    """文本 JSON 兜底：解析 {'tool_calls':[...]} 或 [...] 形式的工具列表。"""
+    content = (content or "").strip()
+    if not content:
+        return []
+    if content.startswith("```"):
+        content = content.split("```", 2)[1]
+        if content.startswith("json"):
+            content = content[4:]
+    try:
+        data = json.loads(content)
+    except Exception:
+        return []
+    arr = data.get("tool_calls") if isinstance(data, dict) else data
+    out: list[dict] = []
+    for c in arr if isinstance(arr, list) else []:
+        if not isinstance(c, dict):
+            continue
+        name = c.get("tool") or c.get("name") or ""
+        args = c.get("args") or c.get("arguments") or {}
+        if name:
+            out.append({"tool": name,
+                        "args": args if isinstance(args, dict) else {}})
+    return out
+
+
 def plan_with_llm(blocks, max_turns: int = MAX_TURNS) -> DeckPlan | None:
-    """工具调用式规划主循环；失败/无 Key 返回 None。"""
+    """工具调用式规划主循环（带历史的多轮 function calling）；失败/无 Key 返回 None。
+
+    维护完整消息历史（system/user/assistant含tool_calls/tool结果），
+    模型才能记住已完成的步骤并继续添加页；端点不支持 function calling 时
+    回退文本 JSON 一次执行。
+    """
     plan = DeckPlan()
     system = build_system_prompt()
+    messages: list[dict] = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": build_user_prompt(blocks, plan)},
+    ]
     done = False
+    last_count = 0
+    stall = 0
     for _ in range(max_turns):
-        user = build_user_prompt(blocks, plan)
-        calls = chat_json_tools(system, user, PLAN_TOOLS)
-        if not calls:
+        msg = chat_tools(messages, PLAN_TOOLS)
+        if not msg:
             break
-        progressed = False
-        for c in calls:
-            result = execute_tool(plan, c.get("tool") or c.get("name"),
-                                  c.get("args") or {})
+        tool_calls = msg.get("tool_calls")
+        if not tool_calls:
+            # 端点不支持 function calling -> 文本 JSON 兜底，一次执行完
+            for c in _parse_text_tool_calls(msg.get("content")):
+                result = execute_tool(plan, c.get("tool"), c.get("args") or {})
+                if result == "DONE":
+                    done = True
+            break
+        # 回填 assistant 消息（含 tool_calls），保持多轮上下文
+        messages.append({"role": "assistant",
+                         "content": msg.get("content") or "",
+                         "tool_calls": tool_calls})
+        grew = False
+        for tc in tool_calls:
+            fn = tc.get("function", {}) or {}
+            name = fn.get("name", "")
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except Exception:
+                args = {}
+            result = execute_tool(plan, name,
+                                  args if isinstance(args, dict) else {})
             if result == "DONE":
                 done = True
             elif result.startswith("OK"):
-                progressed = True
+                grew = True
+            # 工具结果回填（含 tool_call_id），供模型下一轮继续
+            messages.append({"role": "tool",
+                             "tool_call_id": tc.get("id") or "",
+                             "content": result})
         if done:
             break
-        if not progressed:
-            break  # 本轮无有效进展，避免死循环
+        # 防卡死：连续两轮未新增 slide 则停止
+        if len(plan.slides) > last_count:
+            last_count = len(plan.slides)
+            stall = 0
+        else:
+            stall += 1
+            if stall >= 2:
+                break
     if not finalize(plan):
         return None
     return plan

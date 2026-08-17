@@ -160,6 +160,39 @@ def chat_json_tools(system: str, user: str, tools: list[dict], *,
         return None
 
 
+def chat_tools(messages: list[dict], tools: list[dict], *,
+               timeout: int = 120, temperature: float = 0.4) -> dict | None:
+    """发送一轮带 tools 的对话；返回 assistant message dict 或 None。
+
+    这是**多轮 function-calling 协议**的基础：messages 需维护完整历史
+    （system/user/assistant(含 tool_calls)/tool(结果)），由调用方负责回填。
+    返回的 message 含 `tool_calls`（含 id）或 `content`。
+    """
+    if not available():
+        return None
+    try:
+        base = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+        key = os.environ["OPENAI_API_KEY"]
+        payload = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "temperature": temperature,
+        }
+        req = urllib.request.Request(
+            base.rstrip("/") + "/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {key}"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return data["choices"][0]["message"]
+    except Exception:
+        return None
+
+
 def _serialize(blocks: list[Block], max_chars: int = 6000) -> str:
     """把素材压缩成给 LLM 的文本。"""
     parts: list[str] = []
