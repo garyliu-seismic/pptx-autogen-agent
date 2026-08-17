@@ -45,6 +45,8 @@ def main() -> int:
                     help="强制指定主题（默认根据内容自动选择）")
     ap.add_argument("--llm", action="store_true",
                     help="调用 LLM 规划大纲（需设置 OPENAI_API_KEY）")
+    ap.add_argument("--planner", action="store_true",
+                    help="用工具调用式规划器构建大纲（需同时 --llm，兼容 function calling）")
     ap.add_argument("--preview", action="store_true",
                     help="生成后用 LibreOffice 渲染每页 PNG 预览（需安装 LibreOffice）")
     ap.add_argument("--no-plan-qa", action="store_true",
@@ -73,13 +75,27 @@ def main() -> int:
                       author=args.author, theme_name=args.theme)
 
     if args.llm:
-        print("[LLM] 正在请求 AI 规划大纲…")
-        suggestion = suggest(blocks)
-        if suggestion:
-            plan = apply_suggestion(plan, suggestion)
-            print(f"[LLM] 已采用 AI 建议，主题「{suggestion.get('theme')}」")
+        if args.planner:
+            print("[LLM] 正在用工具调用式规划器构建大纲…")
+            from src.planner import plan_with_llm
+            planned = plan_with_llm(blocks)
+            if planned is not None:
+                plan = planned
+                print(f"[LLM] 规划器完成：共 {len(plan.slides)} 页，主题"
+                      f"「{plan.theme_name}」")
+            else:
+                print("[LLM] 规划器失败（无 Key 或调用错误），回退启发式 + 大纲建议。")
+                suggestion = suggest(blocks)
+                if suggestion:
+                    plan = apply_suggestion(plan, suggestion)
         else:
-            print("[LLM] 未获得建议（无 Key 或调用失败），继续使用启发式规划。")
+            print("[LLM] 正在请求 AI 规划大纲…")
+            suggestion = suggest(blocks)
+            if suggestion:
+                plan = apply_suggestion(plan, suggestion)
+                print(f"[LLM] 已采用 AI 建议，主题「{suggestion.get('theme')}」")
+            else:
+                print("[LLM] 未获得建议（无 Key 或调用失败），继续使用启发式规划。")
 
     # Phase B：渲染前规划校验 + 修复（无 Key 时仅做确定性修复）
     if not args.no_plan_qa:

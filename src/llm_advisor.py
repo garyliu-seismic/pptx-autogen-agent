@@ -57,6 +57,80 @@ def chat_json(system: str, user: str, *, timeout: int = 90,
         return None
 
 
+def chat_json_tools(system: str, user: str, tools: list[dict], *,
+                    timeout: int = 120,
+                    temperature: float = 0.4) -> list[dict] | None:
+    """发送带 tools schema 的一次对话，返回 [{'tool': name, 'args': dict}] 或 None。
+
+    优先解析原生 function calling 的 message.tool_calls；
+    端点不支持时回退解析文本内容里的 JSON（{"tool_calls":[...]} 或 [...]）。
+    供 planner 工具调用式规划使用。
+    """
+    if not available():
+        return None
+    try:
+        base = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+        key = os.environ["OPENAI_API_KEY"]
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "tools": tools,
+            "temperature": temperature,
+        }
+        req = urllib.request.Request(
+            base.rstrip("/") + "/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {key}"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        msg = data["choices"][0]["message"]
+
+        # 1) 原生 function calling
+        if msg.get("tool_calls"):
+            out: list[dict] = []
+            for tc in msg["tool_calls"]:
+                fn = tc.get("function", {})
+                name = fn.get("name", "")
+                raw = fn.get("arguments") or "{}"
+                try:
+                    args = json.loads(raw)
+                except Exception:
+                    args = {}
+                if name:
+                    out.append({"tool": name,
+                                "args": args if isinstance(args, dict) else {}})
+            return out
+
+        # 2) 文本 JSON 兜底（兼容不支持 function calling 的端点）
+        content = (msg.get("content") or "").strip()
+        if not content:
+            return None
+        if content.startswith("```"):
+            content = content.split("```", 2)[1]
+            if content.startswith("json"):
+                content = content[4:]
+        data = json.loads(content)
+        arr = data.get("tool_calls") if isinstance(data, dict) else data
+        out = []
+        for c in arr if isinstance(arr, list) else []:
+            if not isinstance(c, dict):
+                continue
+            name = c.get("tool") or c.get("name") or ""
+            args = c.get("args") or c.get("arguments") or {}
+            if name:
+                out.append({"tool": name,
+                            "args": args if isinstance(args, dict) else {}})
+        return out or None
+    except Exception:
+        return None
+
+
 def _serialize(blocks: list[Block], max_chars: int = 6000) -> str:
     """把素材压缩成给 LLM 的文本。"""
     parts: list[str] = []

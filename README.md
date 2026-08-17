@@ -31,6 +31,10 @@ python main.py --input examples/sample_data -o output/demo.pptx \
 # 3) 使用 LLM 规划大纲（需先设置 OPENAI_API_KEY）
 set OPENAI_API_KEY=sk-xxx
 python main.py --input input -o output/deck.pptx --llm
+
+# 4) 工具调用式规划器（更强，需同时 --llm；兼容 DeepSeek/Ollama）
+set OPENAI_API_KEY=sk-xxx
+python main.py --input input -o output/deck.pptx --llm --planner
 ```
 
 > 也可以切换到其它兼容端点，例如 DeepSeek：
@@ -50,6 +54,14 @@ python main.py --input input -o output/deck.pptx --llm
   把具体排版问题回灌 LLM，让它只对问题页重新规划（拆分/精简/换页型）后重新渲染，最多 2 轮。
   无 Key 时自动降级为原有确定性调节，行为不变。
 - **主题选择修复**：`build_deck` 现按主题 key（如 `business`）存储，自动选中的配色不再被静默丢弃。
+
+## 工具调用式规划器（P1）
+
+- `--llm --planner`：LLM 通过 **11 个页型工具**（`set_title`/`set_theme`/`add_section`/
+  `add_bullets`/`add_cards`/`add_timeline`/`add_table`/`add_chart`/`add_summary`/
+  `add_thanks`/`done`）逐页构建大纲，替代一次性 JSON 大纲。
+- 系统提示注入画布几何、每页约束、主题色板与 few-shot 示例（Phase F 上下文构建器）。
+- 原生 function calling 优先，端点不支持时回退文本 JSON；无 Key/失败自动回退启发式 + `--llm` 大纲。
 
 ## 示例
 

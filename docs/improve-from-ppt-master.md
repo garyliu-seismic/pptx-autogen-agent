@@ -10,10 +10,10 @@
 | --- | --- | --- |
 | **B 规划前校验** | ✅ 2026-08-17 已实现 | `src/validate_plan.py`：`validate_plan` / `repair_deterministic`；`src/llm_repair.py`：`repair_plan_with_llm` |
 | **C 渲染后智能修复闭环** | ✅ 2026-08-17 已实现 | `src/quality.py::render_with_quality` 新增 `repairer` 慢路径；`src/llm_repair.py::repair_render_with_llm` |
-| A 工具调用式 planner | ⬜ 未开始 | 见 §3-A |
-| D 读回内容 QA | ⬜ 未开始 | 见 §3-D |
+| **A 工具调用式 planner** | ✅ 2026-08-17 已实现 | `src/planner.py`（PLAN_TOOLS + execute_tool + plan_with_llm）；`llm_advisor.chat_json_tools`（原生 function calling + 文本 JSON 兑底）；`--planner` 开关 |
+| **F 上下文构建器 + few-shot** | ✅ 2026-08-17 已实现 | `planner.build_system_prompt/build_user_prompt`：画布/页型/约束/主题色板/few-shot + 当前进度回传 |
+| D 读回内容 QA | ⬜ 未开始 | 见 §3-D（`tools/readback_qa.py` 已作雏形） |
 | E dry-run 计划确认 | ⬜ 未开始 | 见 §3-E |
-| F 上下文构建器 + few-shot | ⬜ 未开始 | 见 §3-F |
 | G web 搜索 | ⬜ 未开始 | 见 §3-G |
 
 > 附带修复：`analyzer.build_deck` 原把主题**显示名**（如「商务金」）存入 `DeckPlan.theme_name`，
@@ -83,20 +83,13 @@ master 把 40+ 条冲突规则改成 10 条聚焦规则，内容规则放第 1 �
 
 > 原则：**无 `OPENAI_API_KEY` 时全部优雅降级到现有启发式流水线**（现在是、改完还是）。
 
-### Phase A — 规划层升级：`llm_advisor` → 工具调用式 `planner`
-- 新增 `src/tools.py`：定义**页型工具** + JSON Schema + 必填/约束校验：
-  - `add_title_slide(title, subtitle, author)`
-  - `add_section_slide(title, subtitle)`
-  - `add_bullets_slide(title, bullets≤6, takeaway?)`
-  - `add_cards_slide(title, cards[{heading, body}])`
-  - `add_table_slide(title, headers, rows)`
-  - `add_chart_slide(title, chart_type, categories, series)`
-  - `add_timeline_slide(title, milestones[{phase, text}])`
-  - `add_gallery_slide(title, images)`
-  - `add_summary_slide(title, points)`
-  - `set_theme(theme_name)`
-- 新增 `src/planner.py`：多轮 function-calling 循环，逐步构建 `DeckPlan`（替代 `suggest()` 单次 JSON）；记录每页原始素材引用以便 QA。
-- `llm_advisor.suggest` 保留作降级/兜底。
+### Phase A — 规划层升级：工具调用式 `planner` ✅ 已实现
+- 新增 `src/planner.py`：**页型即工具**，LLM 通过结构化 tool_calls 逐页构建 `DeckPlan`（替代一次性 JSON）：
+  - `PLAN_TOOLS`：11 个工具 + JSON Schema（必填/枚举/条数约束）——`set_title` / `set_theme` / `add_section` / `add_bullets(≤6)` / `add_cards(2~6)` / `add_timeline(≤6)` / `add_table` / `add_chart` / `add_summary(≤6)` / `add_thanks` / `done`
+  - `execute_tool`：确定性执行器，就地更新 `DeckPlan`；参数非法返回 `ERROR` 供 LLM 修正（错误调用不落盘，由下游 Phase B 兜底）
+  - `plan_with_llm`：多轮循环直到 `done()` 或轮数上限；自动补封面/致谢
+- `llm_advisor.chat_json_tools`：原生 function calling 优先，端点不支持时回退文本 JSON（兼容 DeepSeek/Ollama）
+- CLI：`--llm --planner` 启用；`llm_advisor.suggest` 保留作降级/兜底；无 Key 或失败自动回退启发式 + suggest。
 
 ### Phase B — 规划前校验：`validate_plan.py` ✅ 已实现
 - 在渲染前校验 `DeckPlan`：
@@ -124,8 +117,9 @@ master 把 40+ 条冲突规则改成 10 条聚焦规则，内容规则放第 1 �
 - `main.py` 新增 `--plan-only`（输出 `outline.json`）与 `--plan plan.json`（载入已确认计划）。
 - 对应 master「dry-run → 用户确认 → 执行」。
 
-### Phase F — 上下文构建器 + few-shot
-- `planner` 的 system prompt 注入：画布 13.333×7.5in、页型清单、每页约束、主题色板、2~3 个 few-shot（封面 / 要点页 / 三卡片页的 JSON 示例）。
+### Phase F — 上下文构建器 + few-shot ✅ 已实现
+- `planner.build_system_prompt`：注入画布 13.333×7.5in、页型清单、每页约束（≤6条/≤60字）、主题色板、3 个 few-shot（封面/要点+章节/卡片+总结）。
+- `planner.build_user_prompt`：素材序列化 + 当前已完成页回传（支持多轮续建）。
 - 显著提升 LLM 产出「可渲染计划」的首轮命中率，减少 Phase B/C 修复次数。
 
 ### Phase G — Web 搜索（可选，`--web`）
