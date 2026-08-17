@@ -12,7 +12,7 @@
 | **C 渲染后智能修复闭环** | ✅ 2026-08-17 已实现 | `src/quality.py::render_with_quality` 新增 `repairer` 慢路径；`src/llm_repair.py::repair_render_with_llm` |
 | **A 工具调用式 planner** | ✅ 2026-08-17 已实现 | `src/planner.py`（PLAN_TOOLS + execute_tool + plan_with_llm）；`llm_advisor.chat_json_tools`（原生 function calling + 文本 JSON 兑底）；`--planner` 开关 |
 | **F 上下文构建器 + few-shot** | ✅ 2026-08-17 已实现 | `planner.build_system_prompt/build_user_prompt`：画布/页型/约束/主题色板/few-shot + 当前进度回传 |
-| D 读回内容 QA | ⬜ 未开始 | 见 §3-D（`tools/readback_qa.py` 已作雏形） |
+| **D 读回内容 QA** | ✅ 2026-08-17 已实现 | `src/readback.py`：计划 vs 渲染逐页核对（空壳页/缺表格/缺图表/缺图片）+ `auto_fix` 剔空壳页；`--no-readback` 关闭 |
 | E dry-run 计划确认 | ⬜ 未开始 | 见 §3-E |
 | G web 搜索 | ⬜ 未开始 | 见 §3-G |
 
@@ -109,9 +109,12 @@ master 把 40+ 条冲突规则改成 10 条聚焦规则，内容规则放第 1 �
 > 实现：`src/quality.py::render_with_quality(..., repairer=...)` 慢路径 + `src/llm_repair.py::repair_render_with_llm`。
 > 由 `main.py --llm` 自动启用；无 Key 时 `repairer` 不传，行为与旧版完全一致。
 
-### Phase D — 读回内容 QA：`readback_qa.py`
+### Phase D — 读回内容 QA：`readback.py` ✅ 已实现
 - 渲染完成后重新打开 pptx，核对每页内容元素数 ≥ 计划预期（`readBackQA` 的离线版）。
-- 「空壳页 / 残缺页」：删除或按原素材重排。
+- 校验：内容页渲染后为空（`empty_render`）/ 缺表格 / 缺图表 / 缺图片；`auto_fix` 剔除空壳/残缺页后重渲染。
+
+> 实现：`src/readback.py`（`compare_plan_render` / `auto_fix` / `summary`），`main.py` 默认开启、`--no-readback` 关闭；
+> 与 `quality.analyze`（几何）互补，本模块管「内容完整性」。
 
 ### Phase E — Dry-run / 计划确认
 - `main.py` 新增 `--plan-only`（输出 `outline.json`）与 `--plan plan.json`（载入已确认计划）。

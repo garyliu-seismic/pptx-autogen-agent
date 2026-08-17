@@ -51,6 +51,8 @@ def main() -> int:
                     help="生成后用 LibreOffice 渲染每页 PNG 预览（需安装 LibreOffice）")
     ap.add_argument("--no-plan-qa", action="store_true",
                     help="跳过渲染前规划校验与修复（默认开启）")
+    ap.add_argument("--no-readback", action="store_true",
+                    help="跳过渲染后读回内容 QA（默认开启）")
     args = ap.parse_args()
 
     if not os.path.isdir(args.input):
@@ -116,6 +118,22 @@ def main() -> int:
 
     repairer = repair_render_with_llm if args.llm else None
     out, issues, tries = render_with_quality(plan, args.output, repairer=repairer)
+
+    # Phase D：读回内容 QA + 空壳页自愈（默认开启，--no-readback 关闭）
+    if not args.no_readback:
+        from src.readback import auto_fix, compare_plan_render, summary as rb_summary
+        rb_issues = compare_plan_render(plan, out)
+        if rb_issues:
+            print(f"[读回QA] {rb_summary(rb_issues)}")
+            new_plan, ndrop = auto_fix(plan, rb_issues)
+            if ndrop:
+                print(f"[读回QA] 剔除 {ndrop} 个空壳/残缺页，重新渲染…")
+                plan = new_plan
+                out, issues, tries = render_with_quality(plan, args.output,
+                                                         repairer=repairer)
+        else:
+            print("[读回QA] 通过")
+
     print(f"\n[完成] 已生成：{os.path.abspath(out)}（质检尝试 {tries} 次）")
     print(f"       共 {len(plan.slides)} 页，主题「{plan.theme_name}」，16:9")
     for i, s in enumerate(plan.slides, 1):
