@@ -109,8 +109,9 @@ def build_deck(blocks: list[Block], title: str = "", subtitle: str = "",
 
     content_slides = _plan_content(blocks, use_dividers, figure_specs)
 
-    # 目录页（纯图片相册等场景不生成目录，避免“照片集/照片集…”当目录）
-    if len(content_slides) >= 3 and any(s.kind not in ("gallery", "image")
+    # 目录页（纯图片相册/时间轴相册等场景不生成目录，避免“照片集/照片集…”当目录）
+    if len(content_slides) >= 3 and any(s.kind not in ("gallery", "image",
+                                                       "photo_timeline")
                                         for s in content_slides):
         agenda_items = [s.title for s in content_slides
                         if s.kind != "section" and s.title][:8]
@@ -171,6 +172,17 @@ def _extract_figures(blocks: list[Block]) -> tuple[list[Block], list[tuple]]:
         out.append(b)
         i += 1
     return out, figs
+
+
+def _has_exif_time(path: str) -> bool:
+    """图片是否带 EXIF 拍摄时间（决定相册用时间轴还是普通画廊）。"""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            ex = im._getexif() or {}
+        return bool(ex.get(36867) or ex.get(306))
+    except Exception:
+        return False
 
 
 def _plan_content(blocks: list[Block], use_dividers: bool,
@@ -255,8 +267,10 @@ def _plan_content(blocks: list[Block], use_dividers: bool,
                 if gallery is None or len(gallery.images) >= MAX_GALLERY_IMAGES:
                     flush()
                 if gallery is None:
+                    # 带 EXIF 拍摄时间 -> 时间轴相册；否则普通画廊
+                    kind = "photo_timeline" if _has_exif_time(b.image_path) else "gallery"
                     gallery = SlideData(title="照片集 / Photo Album",
-                                        kind="gallery", images=[])
+                                        kind=kind, images=[])
                 gallery.images.append(b.image_path)
 
     flush()

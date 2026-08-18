@@ -16,7 +16,7 @@ import argparse
 import io
 import os
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -121,7 +121,8 @@ def _draw_text(img, draw, sh, sx):
 def _draw_picture(img, draw, sh, sx):
     try:
         data = sh.image.blob
-        im = Image.open(io.BytesIO(data)).convert("RGB")
+        im = Image.open(io.BytesIO(data))
+        im = ImageOps.exif_transpose(im).convert("RGB")
     except Exception:
         return
     x0, y0 = sh.left * sx, sh.top * sx

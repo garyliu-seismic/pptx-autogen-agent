@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import json
 import os
 
 import config
@@ -141,8 +142,20 @@ def main() -> int:
         print("       编辑该 JSON 后用 --plan 载入渲染。")
         return 0
 
+    # 逐图旋转：素材目录下的 rotate.json（{文件名: 度数}）
+    rotate_map: dict = {}
+    rot_file = os.path.join(args.input, "rotate.json")
+    if os.path.isfile(rot_file):
+        try:
+            with open(rot_file, encoding="utf-8") as f:
+                rotate_map = json.load(f)
+            print(f"[旋转] 已载入 {len(rotate_map)} 条旋转设置（{rot_file}）")
+        except Exception as e:
+            print(f"[警告] 无法解析 {rot_file}：{e}")
+
     repairer = repair_render_with_llm if args.llm else None
-    out, issues, tries = render_with_quality(plan, args.output, repairer=repairer)
+    out, issues, tries = render_with_quality(plan, args.output, repairer=repairer,
+                                             rotate_map=rotate_map)
 
     # Phase D：读回内容 QA + 空壳页自愈（默认开启，--no-readback 关闭）
     if not args.no_readback:
@@ -155,7 +168,8 @@ def main() -> int:
                 print(f"[读回QA] 剔除 {ndrop} 个空壳/残缺页，重新渲染…")
                 plan = new_plan
                 out, issues, tries = render_with_quality(plan, args.output,
-                                                         repairer=repairer)
+                                                         repairer=repairer,
+                                                         rotate_map=rotate_map)
         else:
             print("[读回QA] 通过")
 

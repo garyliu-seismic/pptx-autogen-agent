@@ -143,13 +143,15 @@ def summary(issues: list[Issue]) -> str:
 def render_with_quality(plan: DeckPlan, output_path: str,
                         max_tries: int = 4, quiet: bool = False,
                         repairer=None, repair_rounds: int = 0,
-                        max_repair_rounds: int = 2) -> tuple[str, list[Issue], int]:
+                        max_repair_rounds: int = 2,
+                        rotate_map: dict | None = None) -> tuple[str, list[Issue], int]:
     """渲染 + 质检 + 自动重排，返回 (输出路径, 最终问题列表, 尝试次数)。
 
     快路径：确定性参数调节（font/hpad/gap），最多 max_tries 次。
     慢路径：参数调节仍无法消除严重问题、且传入 repairer 时，把具体 Issue
     交给 repairer(plan, issues)（通常是 LLM 修复，见 llm_repair.py）返回新计划
     后重新渲染；最多 max_repair_rounds 轮。
+    rotate_map：{文件名: 度数}，逐图旋转（透传给 renderer）。
     """
     from .renderer import render
 
@@ -165,7 +167,8 @@ def render_with_quality(plan: DeckPlan, output_path: str,
         seen.add(key)
 
         render(plan, output_path,
-               font_scale=state["font"], hpad=state["hpad"], gap_mult=state["gap"])
+               font_scale=state["font"], hpad=state["hpad"], gap_mult=state["gap"],
+               rotate_map=rotate_map)
         final_issues = analyze(output_path)
 
         critical = [i for i in final_issues
@@ -204,7 +207,8 @@ def render_with_quality(plan: DeckPlan, output_path: str,
                                            max_tries=max_tries, quiet=quiet,
                                            repairer=repairer,
                                            repair_rounds=repair_rounds + 1,
-                                           max_repair_rounds=max_repair_rounds)
+                                           max_repair_rounds=max_repair_rounds,
+                                           rotate_map=rotate_map)
 
     if not quiet:
         print(f"  [质检] 已达最大尝试 {max_tries} 次，采用当前结果。")

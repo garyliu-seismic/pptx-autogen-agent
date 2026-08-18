@@ -33,7 +33,7 @@ MAX_BULLET_LEN = 80
 MAX_SLIDES = 40
 
 CONTENT_KINDS = {"agenda", "bullets", "cards", "timeline", "table", "chart",
-                 "gallery", "image", "figure", "summary"}
+                 "gallery", "image", "figure", "summary", "photo_timeline"}
 ALL_KINDS = CONTENT_KINDS | {"title", "section", "thanks"}
 
 
@@ -56,7 +56,7 @@ def _is_empty(sd: SlideData) -> bool:
         return sd.table is None or (not sd.table.headers and not sd.table.rows)
     if sd.kind == "chart":
         return sd.chart is None or (not sd.chart.categories or not sd.chart.series)
-    if sd.kind in ("gallery", "image"):
+    if sd.kind in ("gallery", "image", "photo_timeline"):
         return not sd.images
     if sd.kind == "figure":
         return not sd.images and not any(x.strip() for x in sd.bullets)
@@ -140,7 +140,7 @@ def repair_deterministic(plan: DeckPlan) -> tuple[DeckPlan, int]:
         if len(kept) != len(sd.images):
             sd.images = kept
             fixed += 1
-        if sd.kind in ("gallery", "image") and not sd.images:
+        if sd.kind in ("gallery", "image", "photo_timeline") and not sd.images:
             fixed += 1
             continue
 

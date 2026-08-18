@@ -22,7 +22,7 @@ from pptx import Presentation
 from .models import DeckPlan
 
 CONTENT_KINDS = {"agenda", "bullets", "cards", "timeline", "table", "chart",
-                 "gallery", "image", "figure", "summary"}
+                 "gallery", "image", "figure", "summary", "photo_timeline"}
 STRUCT_KINDS = {"title", "section", "thanks"}
 
 
@@ -73,7 +73,7 @@ def compare_plan_render(plan: DeckPlan, path: str) -> list[QAIssue]:
             issues.append(QAIssue(
                 i, "missing_object",
                 f"页 {i}「{sd.title}」预期图表，实际未渲染出图表"))
-        if kind in ("gallery", "image", "figure") and "pic" not in actual:
+        if kind in ("gallery", "image", "photo_timeline", "figure") and "pic" not in actual:
             issues.append(QAIssue(
                 i, "missing_image",
                 f"页 {i}「{sd.title}」预期图片，实际无图片"))
