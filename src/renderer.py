@@ -64,6 +64,23 @@ def _tint(hex_str: str, factor: float = 0.88) -> str:
     return f"{r2:02X}{g2:02X}{b2:02X}"
 
 
+def _shade(hex_str: str, factor: float = 0.85) -> str:
+    """把颜色向黑色混合 factor 比例，生成深色（用于深色主题卡片底色）。"""
+    h = hex_str.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    r2 = int(r * (1 - factor))
+    g2 = int(g * (1 - factor))
+    b2 = int(b * (1 - factor))
+    return f"{r2:02X}{g2:02X}{b2:02X}"
+
+
+def _is_dark_theme(theme) -> bool:
+    """根据主题背景色亮度判断是否为深色主题（决定卡片用深色还是浅色）。"""
+    h = theme.bg.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return (0.299 * r + 0.587 * g + 0.114 * b) < 128
+
+
 def _style_run(run, size: int, color: str, bold: bool = False,
                font: str = FONT) -> None:
     """设置 run 字体，含东亚字体，保证中文正常显示。"""
@@ -306,8 +323,11 @@ def _draw_card(slide, x: float, y: float, w: float, h: float,
         card.adjustments[0] = 0.06
     except Exception:
         pass
+    # 深色主题 -> 深色霓虹面板 + 浅色文字；浅色主题 -> 浅色底 + 深色文字
+    dark = _is_dark_theme(theme)
+    fg_color = "E2E8F0" if dark else "1F2937"
     card.fill.solid()
-    card.fill.fore_color.rgb = _rgb(_tint(color, 0.9))
+    card.fill.fore_color.rgb = _rgb(_shade(color, 0.82) if dark else _tint(color, 0.9))
     card.line.color.rgb = _rgb(color)
     card.line.width = Pt(1.25)
     card.shadow.inherit = False
@@ -330,10 +350,10 @@ def _draw_card(slide, x: float, y: float, w: float, h: float,
     r.text = str(idx)
     _style_run(r, 16, "FFFFFF", True)
 
-    # 内容图标（右上角，与卡片主题对应；卡片底色为浅色，固定深色文字保证可读）
+    # 内容图标（右上角，与卡片主题对应）
     icon = _card_icon(text)
     _textbox(slide, Emu(int((x + w - 0.52) * 914400)), Emu(int((y + 0.12) * 914400)),
-             Inches(0.4), Inches(0.4), icon, size=20, color="1F2937",
+             Inches(0.4), Inches(0.4), icon, size=20, color=fg_color,
              align=PP_ALIGN.RIGHT)
 
     # 文本（垂直居中，避免空白）
@@ -351,7 +371,7 @@ def _draw_card(slide, x: float, y: float, w: float, h: float,
     p.line_spacing = 1.2
     r = p.add_run()
     r.text = text
-    _style_run(r, size, "1F2937", False)
+    _style_run(r, size, fg_color, False)
 
 
 def _render_timeline(slide, sd: SlideData, theme: config.Theme,
