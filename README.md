@@ -66,6 +66,7 @@ python main.py --input input -o output/deck.pptx --llm --planner
   `add_thanks`/`done`）逐页构建大纲，替代一次性 JSON 大纲。
 - 系统提示注入画布几何、每页约束、主题色板与 few-shot 示例（Phase F 上下文构建器）。
 - 原生 function calling 优先，端点不支持时回退文本 JSON；无 Key/失败自动回退启发式 + `--llm` 大纲。
+- 规划器含 `web_search` 工具（Wikipedia 中文）：素材信息不足时 LLM 可联网补充背景事实（结果带来源标注）；网络不通自动降级。
 
 ## 示例
 

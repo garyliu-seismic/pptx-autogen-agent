@@ -14,7 +14,7 @@
 | **F 上下文构建器 + few-shot** | ✅ 2026-08-17 已实现 | `planner.build_system_prompt/build_user_prompt`：画布/页型/约束/主题色板/few-shot + 当前进度回传 |
 | **D 读回内容 QA** | ✅ 2026-08-18 已实现 | `src/readback.py`：计划 vs 渲染逐页核对（空壳页/缺表格/缺图表/缺图片）+ `auto_fix` 剔空壳页；`--no-readback` 关闭 |
 | **E dry-run 计划确认** | ✅ 2026-08-18 已实现 | `--plan-only` 输出 `plan.json`（`src/planio.py` 往返序列化）+ `--plan` 载入确认后的计划再渲染 |
-| G web 搜索 | ⬜ 未开始 | 见 §3-G |
+| **G web 搜索** | ✅ 2026-08-18 已实现 | planner 新增 `web_search` 工具（Wikipedia 中文 search API → 摘要，带来源标注）；网络不通时优雅降级 |
 
 > 附带修复：`analyzer.build_deck` 原把主题**显示名**（如「商务金」）存入 `DeckPlan.theme_name`，
 > 而 `renderer` 用**主题 key**（如 `business`）索引 `config.THEMES` → 自动选中的主题一直被静默丢弃回退到 `modern`。
@@ -149,8 +149,9 @@ master 把 40+ 条冲突规则改成 10 条聚焦规则，内容规则放第 1 �
 - `planner.build_user_prompt`：素材序列化 + 当前已完成页回传（支持多轮续建）。
 - 显著提升 LLM 产出「可渲染计划」的首轮命中率，减少 Phase B/C 修复次数。
 
-### Phase G — Web 搜索（可选，`--web`）
-- 新增 `web_search` 工具（Wikipedia 中文 search API → summary，兼容 master 实现）；素材过薄时让 LLM 检索补事实，输出 `[来源]` 标注。
+### Phase G — Web 搜索（`--planner` 时可用）✅ 已实现
+- planner 新增 `web_search` 工具（Wikipedia 中文 search API → 首条目 REST 摘要，带 `[来源: Wikipedia 中文]` 标注）。
+- 素材信息不足时由 LLM 自行调用；结果回传后用于后续建页。网络/超时返回提示文本，LLM 优雅降级继续用素材。
 
 ---
 

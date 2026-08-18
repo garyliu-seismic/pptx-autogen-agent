@@ -14,6 +14,9 @@
 from __future__ import annotations
 
 import json
+import re
+import urllib.parse
+import urllib.request
 
 import config
 from .llm_advisor import _serialize, chat_json_tools, chat_tools
@@ -87,6 +90,10 @@ PLAN_TOOLS: list[dict] = [
     {"type": "function", "function": {"name": "add_thanks",
         "description": "添加结尾致谢页。",
         "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "web_search",
+        "description": "联网搜索资料补充内容（Wikipedia 中文）。当素材信息不足、需要背景事实时使用。",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string"}}, "required": ["query"]}}},
     {"type": "function", "function": {"name": "done",
         "description": "结束规划。", "parameters": {"type": "object", "properties": {}}}},
 ]
@@ -173,6 +180,11 @@ def execute_tool(plan: DeckPlan, name: str, args: dict) -> str:
             plan.slides.append(SlideData(
                 title=str(args.get("text") or "谢谢 / Thank You"), kind="thanks"))
             return "OK 致谢页"
+        if name == "web_search":
+            q = str(args.get("query") or "").strip()
+            if not q:
+                return "ERROR query 不能为空"
+            return _web_search(q)
         if name == "done":
             return "DONE"
         return f"ERROR 未知工具 {name}"
@@ -196,7 +208,9 @@ def build_system_prompt() -> str:
         "4. 结构建议：封面 → (目录/章节) → 要点/卡片/时间轴/图表 → 总结 → 致谢；"
         "页数 6~20 页为宜。\n"
         f"5. 可用主题：{themes}。\n"
-        "6. 只调用工具，不要输出工具以外的文字。\n"
+        "6. 素材信息不足时可调用 web_search 补充背景事实（结果会回传给你）；"
+        "不要编造素材里没有的数据。\n"
+        "7. 只调用工具，不要输出工具以外的文字。\n"
         "示例（few-shot）：\n"
         '1) set_title({"title":"季度业务汇报","subtitle":"2026 Q3"})  '
         'set_theme({"theme":"business"})\n'
@@ -230,6 +244,39 @@ def finalize(plan: DeckPlan) -> bool:
     if not any(s.kind == "thanks" for s in plan.slides):
         plan.slides.append(SlideData(title="谢谢 / Thank You", kind="thanks"))
     return True
+
+
+def _web_search(query: str, timeout: int = 15) -> str:
+    """中文 Wikipedia 搜索（search API -> 取首个条目摘要）。失败返回提示文本。"""
+    try:
+        search_url = (
+            "https://zh.wikipedia.org/w/api.php?action=query&list=search"
+            "&srsearch=" + urllib.parse.quote(query) +
+            "&format=json&utf8=1&srlimit=3")
+        with urllib.request.urlopen(search_url, timeout=timeout) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        results = (data.get("query") or {}).get("search") or []
+        if not results:
+            return "Web 搜索无结果，请基于已有素材继续。"
+        # 取首个条目的 REST 摘要（更可读）
+        try:
+            page = urllib.parse.quote(results[0]["title"])
+            with urllib.request.urlopen(
+                    f"https://zh.wikipedia.org/api/rest_v1/page/summary/{page}",
+                    timeout=timeout) as r2:
+                d2 = json.loads(r2.read().decode("utf-8"))
+            if d2.get("extract"):
+                return (f"[来源: Wikipedia 中文] {d2.get('title')}："
+                        f"{d2['extract'][:400]}")
+        except Exception:
+            pass
+        lines = []
+        for item in results[:3]:
+            snippet = re.sub(r"<[^>]+>", "", item.get("snippet") or "")
+            lines.append(f"- {item.get('title', '')}：{snippet}")
+        return "[来源: Wikipedia 中文 搜索结果]\n" + "\n".join(lines)
+    except Exception:
+        return "Web 搜索失败（网络或超时），请基于已有素材继续。"
 
 
 def _parse_text_tool_calls(content: str) -> list[dict]:
@@ -302,16 +349,16 @@ def plan_with_llm(blocks, max_turns: int = MAX_TURNS) -> DeckPlan | None:
                                   args if isinstance(args, dict) else {})
             if result == "DONE":
                 done = True
-            elif result.startswith("OK"):
-                grew = True
+            elif result.startswith("OK") or not result.startswith("ERROR"):
+                grew = True   # 建页或 web_search 等有效调用都算进展
             # 工具结果回填（含 tool_call_id），供模型下一轮继续
             messages.append({"role": "tool",
                              "tool_call_id": tc.get("id") or "",
                              "content": result})
         if done:
             break
-        # 防卡死：连续两轮未新增 slide 则停止
-        if len(plan.slides) > last_count:
+        # 防卡死：连续两轮无进展（全是 ERROR）则停止
+        if len(plan.slides) > last_count or grew:
             last_count = len(plan.slides)
             stall = 0
         else:
