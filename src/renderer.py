@@ -519,6 +519,28 @@ def _render_chart(slide, sd: SlideData, theme: config.Theme,
     except Exception:
         pass
 
+    # 深色主题：坐标轴/刻度/图例/数据标签/网格线调成浅色，保证可读
+    if _is_dark_theme(theme):
+        try:
+            for ax in (ch.category_axis, ch.value_axis):
+                ax.tick_labels.font.color.rgb = _rgb("E2E8F0")
+                ax.tick_labels.font.size = Pt(10)
+                ax.format.line.color.rgb = _rgb("64748B")
+            try:
+                ch.value_axis.has_major_gridlines = True
+                ch.value_axis.major_gridlines.format.line.color.rgb = _rgb("334155")
+            except Exception:
+                pass
+            ch.legend.font.color.rgb = _rgb("E2E8F0")
+            ch.legend.font.size = Pt(10)
+            try:
+                ch.plots[0].data_labels.font.color.rgb = _rgb("F1F5F9")
+                ch.plots[0].data_labels.font.size = Pt(9)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     # 系列配色跟随主题（代替 Office 默认蓝橙）
     palette = [theme.primary, theme.secondary, theme.accent,
                theme.primary, theme.secondary, theme.accent]
