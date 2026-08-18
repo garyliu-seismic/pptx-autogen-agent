@@ -97,8 +97,11 @@ def build_deck(blocks: list[Block], title: str = "", subtitle: str = "",
     # 提取“图解说明”小节（标题含“图解/Figure”，后跟要点），供图片配对成图文页
     blocks, figure_specs = _extract_figures(blocks)
 
+    # 封面：素材含图片时取第一张作为代表性封面照片（相册/图文场景）
+    cover_img = next((b.image_path for b in blocks if b.kind == "image"), "")
     slides: list[SlideData] = [SlideData(title=title, kind="title",
-                                         notes=f"主题配色：{theme.name}")]
+                                         notes=f"主题配色：{theme.name}",
+                                         images=[cover_img] if cover_img else [])]
 
     # 小节分隔页仅在数量适中(2~6)时启用，避免页数臃肿
     sec_heads = [b for b in blocks if b.kind == "heading" and b.level >= 2]
@@ -106,8 +109,9 @@ def build_deck(blocks: list[Block], title: str = "", subtitle: str = "",
 
     content_slides = _plan_content(blocks, use_dividers, figure_specs)
 
-    # 目录页
-    if len(content_slides) >= 3:
+    # 目录页（纯图片相册等场景不生成目录，避免“照片集/照片集…”当目录）
+    if len(content_slides) >= 3 and any(s.kind not in ("gallery", "image")
+                                        for s in content_slides):
         agenda_items = [s.title for s in content_slides
                         if s.kind != "section" and s.title][:8]
         if len(agenda_items) >= 2:
