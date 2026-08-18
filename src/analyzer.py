@@ -20,6 +20,7 @@ from .models import Block, DeckPlan, SlideData
 from .theme_engine import pick_theme
 
 BULLETS_PER_SLIDE = 6
+MAX_GALLERY_IMAGES = 6   # 每页画廊最多放几张图，超出自动分页成多页
 SUMMARY_KEYWORDS = ["总结", "结论", "展望", "下一步", "行动项",
                     "summary", "conclusion", "next steps", "action items"]
 
@@ -177,15 +178,19 @@ def _plan_content(blocks: list[Block], use_dividers: bool,
     slides: list[SlideData] = []
     cur: SlideData | None = None
     gallery: SlideData | None = None
+    gallery_no = 0
 
     def flush() -> None:
-        nonlocal cur, gallery
+        nonlocal cur, gallery, gallery_no
         if cur is not None:
             # 空的“要点页”不生成（内容可能已被提取成图文页/图表等）
             if not (cur.kind == "bullets" and not cur.bullets):
                 slides.append(_refine_kind(cur))
             cur = None
         if gallery is not None and gallery.images:
+            gallery_no += 1
+            if gallery_no > 1:
+                gallery.title = f"照片集（{gallery_no}）/ Photo Album"
             slides.append(gallery)
             gallery = None
 
@@ -242,8 +247,11 @@ def _plan_content(blocks: list[Block], use_dividers: bool,
                                         takeaway=takeaway,
                                         notes="图文讲解页"))
             else:
+                # 每页画廊最多 MAX_GALLERY_IMAGES 张，满了自动开新页
+                if gallery is None or len(gallery.images) >= MAX_GALLERY_IMAGES:
+                    flush()
                 if gallery is None:
-                    gallery = SlideData(title="图解与图片 / Diagrams & Images",
+                    gallery = SlideData(title="照片集 / Photo Album",
                                         kind="gallery", images=[])
                 gallery.images.append(b.image_path)
 
