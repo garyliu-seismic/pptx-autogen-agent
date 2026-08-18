@@ -79,6 +79,13 @@ def analyze(path: str) -> list[Issue]:
         for sh in slide.shapes:
             if sh.left is None or sh.top is None:
                 continue
+            # 非法几何：宽/高为负（OOXML 无效，PowerPoint 会提示“修复”）
+            if (sh.width is not None and sh.width < 0) \
+                    or (sh.height is not None and sh.height < 0):
+                bad = min(sh.width or 0, sh.height or 0) / 914400
+                issues.append(Issue(idx, "negative_geometry", abs(bad),
+                                    f"{sh.shape_type} {sh.name} 宽/高为负"))
+                continue
             l = sh.left / 914400
             t = sh.top / 914400
             w = sh.width / 914400 if sh.width else 0
@@ -172,7 +179,8 @@ def render_with_quality(plan: DeckPlan, output_path: str,
         final_issues = analyze(output_path)
 
         critical = [i for i in final_issues
-                    if i.kind in ("overflow_x", "overflow_y", "overlap", "text_overflow")]
+                    if i.kind in ("overflow_x", "overflow_y", "overlap",
+                                  "text_overflow", "negative_geometry")]
         sparse = [i for i in final_issues if i.kind == "sparse"]
         if not quiet:
             print(f"  [质检] 第 {attempt} 次: {summary(final_issues)}")
@@ -194,7 +202,8 @@ def render_with_quality(plan: DeckPlan, output_path: str,
     # 慢路径：确定性参数调节用尽仍有严重问题 -> 交给 repairer（通常为 LLM）
     if repairer is not None and repair_rounds < max_repair_rounds:
         critical = [i for i in final_issues
-                    if i.kind in ("overflow_x", "overflow_y", "overlap", "text_overflow")]
+                    if i.kind in ("overflow_x", "overflow_y", "overlap",
+                                  "text_overflow", "negative_geometry")]
         if critical:
             if not quiet:
                 print(f"  [质检] 参数调节未消除排版问题，调用 LLM 修复"

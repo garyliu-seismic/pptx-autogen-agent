@@ -681,11 +681,16 @@ def _render_photo_timeline(slide, sd: SlideData, theme: config.Theme,
         x = cx - card_w / 2
         _draw_photo_card(slide, p, x, y0, card_w, card_h, theme)
 
-        # 竖直连线：卡片边缘 -> 轴线
-        line_top = y0 if above else y0 + card_h
+        # 竖直连线：卡片边缘 -> 轴线（矩形高度必须为正，负高度会损坏 pptx）
+        if above:
+            line_top = y0 + card_h   # 上方卡片：从卡片下缘连到轴线
+            line_h = axis_y - line_top
+        else:
+            line_top = axis_y        # 下方卡片：从轴线下连到卡片上缘
+            line_h = y0 - axis_y
         _bar(slide, Emu(int((cx - 0.01) * 914400)),
              Emu(int(line_top * 914400)), Pt(2),
-             Emu(int((axis_y - line_top) * 914400)), theme.accent)
+             Emu(int(line_h * 914400)), theme.accent)
 
         # 轴线节点
         d = 0.28
