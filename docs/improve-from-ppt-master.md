@@ -150,8 +150,7 @@ master 把 40+ 条冲突规则改成 10 条聚焦规则，内容规则放第 1 �
 - 显著提升 LLM 产出「可渲染计划」的首轮命中率，减少 Phase B/C 修复次数。
 
 ### Phase G — Web 搜索（`--planner` 时可用）✅ 已实现
-- planner 新增 `web_search` 工具（Wikipedia 中文 search API → 首条目 REST 摘要，带 `[来源: Wikipedia 中文]` 标注）。
-- 素材信息不足时由 LLM 自行调用；结果回传后用于后续建页。网络/超时返回提示文本，LLM 优雅降级继续用素材。
+- planner 新增 `web_search` 工具：**百度百科 lemma 卡片 API 优先**（返回 `abstract` 摘要段落，带 `[来源: 百度百科]` 标注），**Wikipedia 中文备选**；两者都失败返回提示文本，LLM 优雅降级继续用素材。
 
 ---
 

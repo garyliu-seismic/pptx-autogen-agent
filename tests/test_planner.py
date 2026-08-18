@@ -68,3 +68,64 @@ def test_finalize_guarantees_cover_and_thanks():
     assert P.finalize(plan)
     assert plan.slides[0].kind == "title"
     assert plan.slides[-1].kind == "thanks"
+
+
+# ---- web_search：百度百科优先、维基备选、全失败降级 ----
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        return json.dumps(self._payload).encode("utf-8")
+
+
+def test_baike_search_parses_abstract(monkeypatch):
+    import urllib.request
+    payload = {"title": "人工智能", "desc": "短描述",
+               "abstract": "人工智能（AI）是<a href=x>模拟</a>智能的学科。"}
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda *a, **k: _FakeResp(payload))
+    r = P._baike_search("人工智能")
+    assert r and r.startswith("[来源: 百度百科] 人工智能")
+    assert "模拟" in r and "<a" not in r          # 已去 HTML 标签
+
+
+def test_baike_search_uses_desc_when_no_abstract(monkeypatch):
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda *a, **k: _FakeResp({"title": "t", "desc": "仅有描述"}))
+    r = P._baike_search("t")
+    assert r and "仅有描述" in r
+
+
+def test_baike_search_returns_none_on_error(monkeypatch):
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: 1 / 0)
+    assert P._baike_search("x") is None
+
+
+def test_web_search_prefers_baike(monkeypatch):
+    monkeypatch.setattr(P, "_baike_search", lambda q, **kw: "[来源: 百度百科] 内容")
+    monkeypatch.setattr(P, "_wikipedia_zh_search", lambda q, **kw: "不应被调用")
+    assert P._web_search("q").startswith("[来源: 百度百科]")
+
+
+def test_web_search_falls_back_to_wikipedia(monkeypatch):
+    monkeypatch.setattr(P, "_baike_search", lambda q, **kw: None)
+    monkeypatch.setattr(P, "_wikipedia_zh_search",
+                        lambda q, **kw: "[来源: Wikipedia 中文] 内容")
+    assert P._web_search("q").startswith("[来源: Wikipedia 中文]")
+
+
+def test_web_search_all_fail_degrades(monkeypatch):
+    monkeypatch.setattr(P, "_baike_search", lambda q, **kw: None)
+    monkeypatch.setattr(P, "_wikipedia_zh_search", lambda q, **kw: None)
+    r = P._web_search("q")
+    assert "无结果或网络不通" in r

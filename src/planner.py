@@ -246,8 +246,32 @@ def finalize(plan: DeckPlan) -> bool:
     return True
 
 
-def _web_search(query: str, timeout: int = 15) -> str:
-    """中文 Wikipedia 搜索（search API -> 取首个条目摘要）。失败返回提示文本。"""
+def _strip_html(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text or "").strip()
+
+
+def _baike_search(query: str, timeout: int = 15) -> str | None:
+    """百度百科 lemma 卡片 API -> 摘要；失败/无结果返回 None。"""
+    try:
+        url = ("https://baike.baidu.com/api/openapi/BaikeLemmaCardApi"
+               "?scope=103&format=json&appid=379020&bk_key=" +
+               urllib.parse.quote(query) + "&bk_length=600")
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        title = str(data.get("title") or query)
+        text = _strip_html(str(data.get("abstract") or ""))
+        if not text:
+            text = _strip_html(str(data.get("desc") or ""))
+        if not text:
+            return None
+        return f"[来源: 百度百科] {title}：{text[:400]}"
+    except Exception:
+        return None
+
+
+def _wikipedia_zh_search(query: str, timeout: int = 15) -> str | None:
+    """中文 Wikipedia 搜索（search API -> 取首个条目摘要）；失败/无结果返回 None。"""
     try:
         search_url = (
             "https://zh.wikipedia.org/w/api.php?action=query&list=search"
@@ -257,8 +281,7 @@ def _web_search(query: str, timeout: int = 15) -> str:
             data = json.loads(r.read().decode("utf-8"))
         results = (data.get("query") or {}).get("search") or []
         if not results:
-            return "Web 搜索无结果，请基于已有素材继续。"
-        # 取首个条目的 REST 摘要（更可读）
+            return None
         try:
             page = urllib.parse.quote(results[0]["title"])
             with urllib.request.urlopen(
@@ -272,11 +295,24 @@ def _web_search(query: str, timeout: int = 15) -> str:
             pass
         lines = []
         for item in results[:3]:
-            snippet = re.sub(r"<[^>]+>", "", item.get("snippet") or "")
+            snippet = _strip_html(str(item.get("snippet") or ""))
             lines.append(f"- {item.get('title', '')}：{snippet}")
         return "[来源: Wikipedia 中文 搜索结果]\n" + "\n".join(lines)
     except Exception:
-        return "Web 搜索失败（网络或超时），请基于已有素材继续。"
+        return None
+
+
+def _web_search(query: str, timeout: int = 15) -> str:
+    """联网搜索补充内容：百度百科优先，维基百科备选；都失败返回提示文本。"""
+    for fn in (_baike_search, _wikipedia_zh_search):
+        try:
+            r = fn(query, timeout=timeout)
+        except Exception:
+            r = None
+        if r:
+            return r
+    return ("Web 搜索无结果或网络不通（已试 百度百科 / 维基百科），"
+            "请基于已有素材继续。")
 
 
 def _parse_text_tool_calls(content: str) -> list[dict]:
