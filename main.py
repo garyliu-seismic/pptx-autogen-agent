@@ -16,6 +16,7 @@ from src.analyzer import apply_suggestion, build_deck
 from src.llm_advisor import suggest
 from src.llm_repair import repair_plan_with_llm, repair_render_with_llm
 from src.parsers import SUPPORTED_EXT, parse_file
+from src.planio import load_plan, save_plan
 from src.quality import render_with_quality
 from src.validate_plan import repair_deterministic, validate_plan
 
@@ -53,6 +54,11 @@ def main() -> int:
                     help="跳过渲染前规划校验与修复（默认开启）")
     ap.add_argument("--no-readback", action="store_true",
                     help="跳过渲染后读回内容 QA（默认开启）")
+    ap.add_argument("--plan-only", nargs="?", const=config.DEFAULT_PLAN_PATH,
+                    metavar="PLAN_JSON", default=None,
+                    help="只输出计划 JSON 供预览/编辑（默认 %(const)s），不渲染")
+    ap.add_argument("--plan", metavar="PLAN_JSON", default=None,
+                    help="载入已确认/编辑过的计划 JSON 再渲染（跳过 LLM 规划）")
     args = ap.parse_args()
 
     if not os.path.isdir(args.input):
@@ -76,7 +82,7 @@ def main() -> int:
     plan = build_deck(blocks, title=args.title, subtitle=args.subtitle,
                       author=args.author, theme_name=args.theme)
 
-    if args.llm:
+    if args.llm and not args.plan:
         if args.planner:
             print("[LLM] 正在用工具调用式规划器构建大纲…")
             from src.planner import plan_with_llm
@@ -99,6 +105,15 @@ def main() -> int:
             else:
                 print("[LLM] 未获得建议（无 Key 或调用失败），继续使用启发式规划。")
 
+    # P2-E：--plan 载入已确认/编辑过的计划（跳过上面的 LLM 规划）
+    if args.plan:
+        try:
+            plan = load_plan(args.plan)
+            print(f"[计划] 已载入 {args.plan}：{len(plan.slides)} 页")
+        except Exception as e:
+            print(f"[错误] 无法载入计划文件 {args.plan}：{e}")
+            return 1
+
     # Phase B：渲染前规划校验 + 修复（无 Key 时仅做确定性修复）
     if not args.no_plan_qa:
         pqa_issues = validate_plan(plan)
@@ -115,6 +130,16 @@ def main() -> int:
                 print(f"[规划质检] 确定性修复 {nfixed} 项")
         else:
             print("[规划质检] 通过")
+
+    # P2-E：--plan-only 输出计划 JSON 供预览/编辑后退出
+    if args.plan_only:
+        save_plan(plan, args.plan_only)
+        print(f"\n[计划] 已写出：{os.path.abspath(args.plan_only)}")
+        print(f"       共 {len(plan.slides)} 页，主题「{plan.theme_name}」")
+        for i, s in enumerate(plan.slides, 1):
+            print(f"       {i:02d}. [{s.kind:8}] {s.title}")
+        print("       编辑该 JSON 后用 --plan 载入渲染。")
+        return 0
 
     repairer = repair_render_with_llm if args.llm else None
     out, issues, tries = render_with_quality(plan, args.output, repairer=repairer)

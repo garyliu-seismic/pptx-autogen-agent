@@ -55,6 +55,8 @@ python main.py --input input -o output/deck.pptx --llm --planner
   无 Key 时自动降级为原有确定性调节，行为不变。
 - **读回内容 QA（默认开启）**：渲染后逐页核对「计划 vs 实际」内容（空壳页/缺表格/缺图表/缺图片），
   自动剔除空壳/残缺页并重新渲染；`--no-readback` 关闭。
+- **Dry-run 计划确认（P2-E）**：`--plan-only` 输出 `output/plan.json` 供预览/编辑后退出，
+  `--plan plan.json` 载入确认过的计划再渲染（跳过 LLM 规划）。
 - **主题选择修复**：`build_deck` 现按主题 key（如 `business`）存储，自动选中的配色不再被静默丢弃。
 
 ## 工具调用式规划器（P1）

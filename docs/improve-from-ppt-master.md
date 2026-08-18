@@ -12,8 +12,8 @@
 | **C 渲染后智能修复闭环** | ✅ 2026-08-17 已实现 | `src/quality.py::render_with_quality` 新增 `repairer` 慢路径；`src/llm_repair.py::repair_render_with_llm` |
 | **A 工具调用式 planner** | ✅ 2026-08-17 已实现 | `src/planner.py`（PLAN_TOOLS + execute_tool + plan_with_llm）；`llm_advisor.chat_json_tools`（原生 function calling + 文本 JSON 兑底）；`--planner` 开关 |
 | **F 上下文构建器 + few-shot** | ✅ 2026-08-17 已实现 | `planner.build_system_prompt/build_user_prompt`：画布/页型/约束/主题色板/few-shot + 当前进度回传 |
-| **D 读回内容 QA** | ✅ 2026-08-17 已实现 | `src/readback.py`：计划 vs 渲染逐页核对（空壳页/缺表格/缺图表/缺图片）+ `auto_fix` 剔空壳页；`--no-readback` 关闭 |
-| E dry-run 计划确认 | ⬜ 未开始 | 见 §3-E |
+| **D 读回内容 QA** | ✅ 2026-08-18 已实现 | `src/readback.py`：计划 vs 渲染逐页核对（空壳页/缺表格/缺图表/缺图片）+ `auto_fix` 剔空壳页；`--no-readback` 关闭 |
+| **E dry-run 计划确认** | ✅ 2026-08-18 已实现 | `--plan-only` 输出 `plan.json`（`src/planio.py` 往返序列化）+ `--plan` 载入确认后的计划再渲染 |
 | G web 搜索 | ⬜ 未开始 | 见 §3-G |
 
 > 附带修复：`analyzer.build_deck` 原把主题**显示名**（如「商务金」）存入 `DeckPlan.theme_name`，
@@ -138,9 +138,11 @@ master 把 40+ 条冲突规则改成 10 条聚焦规则，内容规则放第 1 �
 > 实现：`src/readback.py`（`compare_plan_render` / `auto_fix` / `summary`），`main.py` 默认开启、`--no-readback` 关闭；
 > 与 `quality.analyze`（几何）互补，本模块管「内容完整性」。
 
-### Phase E — Dry-run / 计划确认
-- `main.py` 新增 `--plan-only`（输出 `outline.json`）与 `--plan plan.json`（载入已确认计划）。
+### Phase E — Dry-run / 计划确认 ✅ 已实现
+- `main.py` 新增 `--plan-only`（输出 `plan.json` 供预览/编辑，不渲染）与 `--plan plan.json`（载入已确认计划再渲染，跳过 LLM 规划）。
 - 对应 master「dry-run → 用户确认 → 执行」。
+
+> 实现：`src/planio.py`（DeckPlan <-> JSON 往返，含表格/图表/图片路径）；`--plan` 载入后仍走 Phase B/C/D 质检。
 
 ### Phase F — 上下文构建器 + few-shot ✅ 已实现
 - `planner.build_system_prompt`：注入画布 13.333×7.5in、页型清单、每页约束（≤6条/≤60字）、主题色板、3 个 few-shot（封面/要点+章节/卡片+总结）。

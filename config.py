@@ -8,6 +8,7 @@ from dataclasses import dataclass
 # ---------------------------------------------------------------------------
 DEFAULT_INPUT_DIR = "input"                # 素材目录（txt / csv / pdf / png）
 DEFAULT_OUTPUT_PATH = "output/deck.pptx"   # 输出 pptx 路径
+DEFAULT_PLAN_PATH = "output/plan.json"     # --plan-only 输出的计划 JSON 路径
 
 
 # ---------------------------------------------------------------------------
