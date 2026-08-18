@@ -77,6 +77,15 @@ python main.py --input examples/sample_data -o output/demo.pptx
 
 打开 `output/demo.pptx` 即可看到自动生成的完整演示文稿。
 
+## 测试
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest        # 34 个用例，覆盖校验/修复/规划/渲染/序列化/读回
+```
+
+> 测试全部为本地逻辑 + mock（不发真实网络/LLM 请求），无需 `OPENAI_API_KEY`。
+
 ## 目录结构
 
 ```

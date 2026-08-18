@@ -97,6 +97,8 @@ def auto_fix(plan: DeckPlan, issues: list[QAIssue]) -> tuple[DeckPlan, int]:
             if not (i in drop and sd.kind not in STRUCT_KINDS)]
     if len(kept) < 2:
         return plan, 0  # 兜底：不冒险删到只剩 1 页
+    if not any(s.kind in CONTENT_KINDS for s in kept):
+        return plan, 0  # 剔除后无任何内容页 -> 保留原计划，避免空壳整份
     new_plan.slides = kept
     return new_plan, len(plan.slides) - len(kept)
 
