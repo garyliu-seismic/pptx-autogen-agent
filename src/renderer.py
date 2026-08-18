@@ -359,7 +359,7 @@ def _render_timeline(slide, sd: SlideData, theme: config.Theme,
     """时间轴页：适合里程碑 / 分阶段步骤。加高节点、标题下补引导语。"""
     _content_header(slide, theme, sd.title, page_no, total, kind="timeline")
     items = [b for b in sd.bullets if b.strip()]
-    n = min(len(items), 6)
+    n = min(len(items), 8)
     if n == 0:
         return
 
@@ -487,6 +487,15 @@ def _render_chart(slide, sd: SlideData, theme: config.Theme,
     ch.legend.include_in_layout = False
     try:
         ch.plots[0].gap_width = 80
+    except Exception:
+        pass
+    # 数据标签：数值直接显示在柱子上
+    try:
+        plot = ch.plots[0]
+        plot.has_data_labels = True
+        plot.data_labels.font.size = Pt(9)
+        plot.data_labels.number_format = "0.0"
+        plot.data_labels.number_format_is_linked = False
     except Exception:
         pass
 
@@ -893,6 +902,15 @@ def render(plan: DeckPlan, output_path: str, *,
                 slide.notes_slide.notes_text_frame.text = notes
         except Exception:
             pass
+
+        # 来源标注（左下角页脚小字，结构页除外）
+        if sd.source and kind not in ("title", "section", "thanks"):
+            try:
+                _textbox(slide, MARGIN, SLIDE_H - Inches(0.5),
+                         CONTENT_W - Inches(2.0), Inches(0.35),
+                         f"数据来源：{sd.source}", size=11, color=theme.secondary)
+            except Exception:
+                pass
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     prs.save(output_path)

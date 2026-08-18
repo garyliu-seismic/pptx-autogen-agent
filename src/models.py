@@ -81,6 +81,7 @@ class SlideData:
     notes: str = ""
     takeaway: str = ""     # 一句话结论（图文页右下角）
     level: int = 0
+    source: str = ""       # 数据来源标注（渲染为页脚小字，如“各模型官方报告”）
 
 
 @dataclass

@@ -27,6 +27,8 @@ def plan_to_dict(plan: DeckPlan) -> dict:
             d["takeaway"] = s.takeaway
         if s.notes:
             d["notes"] = s.notes
+        if s.source:
+            d["source"] = s.source
         if s.table is not None:
             d["headers"] = list(s.table.headers)
             d["rows"] = [[str(c) for c in r] for r in s.table.rows]
@@ -50,12 +52,17 @@ def plan_to_dict(plan: DeckPlan) -> dict:
 
 
 def _slide_from_dict(d: dict) -> SlideData:
+    # 兼容 cards 用 "items" 键写列表（与 bullets 等价）
+    bullets_raw = d.get("bullets")
+    if bullets_raw is None:
+        bullets_raw = d.get("items")
     sd = SlideData(
         title=str(d.get("title") or ""),
         kind=str(d.get("kind") or "bullets"),
-        bullets=[str(x) for x in (d.get("bullets") or [])],
+        bullets=[str(x) for x in (bullets_raw or [])],
         takeaway=str(d.get("takeaway") or ""),
         notes=str(d.get("notes") or ""),
+        source=str(d.get("source") or ""),
         images=[str(x) for x in (d.get("images") or [])],
     )
     if "headers" in d or "rows" in d:

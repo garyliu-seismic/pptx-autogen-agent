@@ -40,3 +40,22 @@ def test_dict_json_roundtrip_serializable():
     s = json.dumps(d, ensure_ascii=False)
     assert '"theme": "business"' in s
     assert '"kind": "chart"' in s
+
+
+def test_slide_from_dict_cards_items_alias():
+    from src.planio import plan_from_dict
+    plan = plan_from_dict({"theme": "tech", "slides": [
+        {"kind": "cards", "title": "能力", "items": ["a", "b", "c"]}]})
+    assert plan.slides[0].kind == "cards"
+    assert plan.slides[0].bullets == ["a", "b", "c"]
+
+
+def test_source_field_roundtrip(tmp_path):
+    p = str(tmp_path / "src.json")
+    save_plan(_plan(), p)
+    p2 = load_plan(p)
+    # 原计划无 source -> 补一个验证序列化
+    plan = _plan()
+    plan.slides[1].source = "某来源"
+    d = plan_to_dict(plan)
+    assert d["slides"][1]["source"] == "某来源"
