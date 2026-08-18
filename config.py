@@ -23,6 +23,8 @@ class Theme:
     bg: str          # 内容页背景
     fg: str          # 内容页文字色
     font: str = "Microsoft YaHei"  # 中英文字体（PowerPoint/Windows 通用）
+    bg_image: str = ""        # 封面/章节背景图（全出血铺底）
+    bg_image_soft: str = ""   # 内容页背景图（较淡，保证文字可读）
 
 
 THEMES: dict[str, Theme] = {
@@ -34,5 +36,8 @@ THEMES: dict[str, Theme] = {
     "nature":     Theme("自然青", "0E7490", "06B6D4", "84CC16", "F0FDFA", "164E63"),
     "elegant":    Theme("简约灰", "374151", "6B7280", "111827", "FFFFFF", "1F2937"),
     "modern":     Theme("现代靛", "312E81", "6366F1", "F59E0B", "FFFFFF", "1E1B4B"),
+    "ai":         Theme("AI 科技", "6366F1", "22D3EE", "A855F7", "0B1020", "E2E8F0",
+                        bg_image="assets/ai_bg.png",
+                        bg_image_soft="assets/ai_bg_soft.png"),
 }
 DEFAULT_THEME = "modern"

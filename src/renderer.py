@@ -330,10 +330,10 @@ def _draw_card(slide, x: float, y: float, w: float, h: float,
     r.text = str(idx)
     _style_run(r, 16, "FFFFFF", True)
 
-    # 内容图标（右上角，与卡片主题对应）
+    # 内容图标（右上角，与卡片主题对应；卡片底色为浅色，固定深色文字保证可读）
     icon = _card_icon(text)
     _textbox(slide, Emu(int((x + w - 0.52) * 914400)), Emu(int((y + 0.12) * 914400)),
-             Inches(0.4), Inches(0.4), icon, size=20, color=theme.fg,
+             Inches(0.4), Inches(0.4), icon, size=20, color="1F2937",
              align=PP_ALIGN.RIGHT)
 
     # 文本（垂直居中，避免空白）
@@ -351,7 +351,7 @@ def _draw_card(slide, x: float, y: float, w: float, h: float,
     p.line_spacing = 1.2
     r = p.add_run()
     r.text = text
-    _style_run(r, size, theme.fg, False)
+    _style_run(r, size, "1F2937", False)
 
 
 def _render_timeline(slide, sd: SlideData, theme: config.Theme,
@@ -445,7 +445,7 @@ def _render_table(slide, sd: SlideData, theme: config.Theme,
         for j in range(ncols):
             val = row[j] if j < len(row) else ""
             _set_cell(tbl.cell(i + 1, j), str(val),
-                      theme.bg if i % 2 == 0 else "FFFFFF", False)
+                      "EEF2F7" if i % 2 == 0 else "FFFFFF", False)
 
 
 def _set_cell(cell, text: str, fill: str, bold: bool) -> None:
@@ -532,7 +532,7 @@ def _render_chart(slide, sd: SlideData, theme: config.Theme,
             for j in range(nc):
                 val = row[j] if j < len(row) else ""
                 _set_cell(tbl.cell(i + 1, j), str(val),
-                          theme.bg if i % 2 == 0 else "FFFFFF", False)
+                          "EEF2F7" if i % 2 == 0 else "FFFFFF", False)
 
 
 def _gallery_caption(path: str) -> str:
@@ -868,6 +868,15 @@ def render(plan: DeckPlan, output_path: str, *,
         slide = prs.slides.add_slide(blank)
         page_no = idx + 1
         kind = sd.kind
+
+        # 主题背景图：封面/章节用主图，内容页用淡版（全出血铺底，内容在其上）
+        bg_img = theme.bg_image if kind in ("title", "section") else theme.bg_image_soft
+        if bg_img and os.path.isfile(bg_img):
+            try:
+                slide.shapes.add_picture(bg_img, 0, 0, SLIDE_W, SLIDE_H)
+            except Exception:
+                pass
+
         if kind == "title":
             _render_title(slide, sd, theme, plan)
         elif kind == "section":
