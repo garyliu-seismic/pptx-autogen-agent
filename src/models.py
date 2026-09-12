@@ -13,6 +13,7 @@ class TableData:
     """二维表格数据（可编辑表格）。"""
     headers: list[str] = field(default_factory=list)
     rows: list[list] = field(default_factory=list)
+    source_ref: str = ""    # 数据来源标注（素材文件名/livedoc 模板 id 等），空表示未标注
 
     def to_chart(self) -> Optional["ChartData"]:
         """尝试把数值型表格转成图表数据；若无可转列返回 None。"""
@@ -39,7 +40,8 @@ class TableData:
             # 列数少 -> 柱状图，列数多 -> 折线图
             ctype = "column" if len(numeric_cols) <= 3 else "line"
             series = [{"name": name, "values": vals} for name, vals in numeric_cols]
-            return ChartData(chart_type=ctype, categories=categories, series=series)
+            return ChartData(chart_type=ctype, categories=categories, series=series,
+                             source_ref=self.source_ref)
         except Exception:
             return None
 
@@ -51,6 +53,7 @@ class ChartData:
     categories: list[str] = field(default_factory=list)
     series: list[dict] = field(default_factory=list)  # [{name, values}]
     title: str = ""
+    source_ref: str = ""    # 数据来源标注（素材文件名/livedoc 模板 id 等），空表示未标注
 
 
 @dataclass

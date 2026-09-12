@@ -38,6 +38,14 @@ class Issue:
     detail: str = ""
 
 
+class LayoutConstraintError(RuntimeError):
+    """hard_fail=True 时，重排+LLM 修复用尽仍有严重版式问题，拒绝「将就」输出。"""
+
+    def __init__(self, issues: list[Issue]):
+        self.issues = issues
+        super().__init__(summary(issues))
+
+
 def _max_run_size(sh) -> float:
     size = 0.0
     for p in sh.text_frame.paragraphs:
@@ -151,7 +159,8 @@ def render_with_quality(plan: DeckPlan, output_path: str,
                         max_tries: int = 4, quiet: bool = False,
                         repairer=None, repair_rounds: int = 0,
                         max_repair_rounds: int = 2,
-                        rotate_map: dict | None = None) -> tuple[str, list[Issue], int]:
+                        rotate_map: dict | None = None,
+                        hard_fail: bool = False) -> tuple[str, list[Issue], int]:
     """渲染 + 质检 + 自动重排，返回 (输出路径, 最终问题列表, 尝试次数)。
 
     快路径：确定性参数调节（font/hpad/gap），最多 max_tries 次。
@@ -159,6 +168,8 @@ def render_with_quality(plan: DeckPlan, output_path: str,
     交给 repairer(plan, issues)（通常是 LLM 修复，见 llm_repair.py）返回新计划
     后重新渲染；最多 max_repair_rounds 轮。
     rotate_map：{文件名: 度数}，逐图旋转（透传给 renderer）。
+    hard_fail：两条路都用尽仍有严重问题时，不再「将就」返回，而是抛
+    LayoutConstraintError。
     """
     from .renderer import render
 
@@ -217,7 +228,15 @@ def render_with_quality(plan: DeckPlan, output_path: str,
                                            repairer=repairer,
                                            repair_rounds=repair_rounds + 1,
                                            max_repair_rounds=max_repair_rounds,
-                                           rotate_map=rotate_map)
+                                           rotate_map=rotate_map,
+                                           hard_fail=hard_fail)
+
+    if hard_fail:
+        critical = [i for i in final_issues
+                    if i.kind in ("overflow_x", "overflow_y", "overlap",
+                                  "text_overflow", "negative_geometry")]
+        if critical:
+            raise LayoutConstraintError(critical)
 
     if not quiet:
         print(f"  [质检] 已达最大尝试 {max_tries} 次，采用当前结果。")

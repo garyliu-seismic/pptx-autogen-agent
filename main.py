@@ -14,11 +14,12 @@ import os
 
 import config
 from src.analyzer import apply_suggestion, build_deck
+from src.constraints import load_constraints
 from src.llm_advisor import suggest
 from src.llm_repair import repair_plan_with_llm, repair_render_with_llm
 from src.parsers import SUPPORTED_EXT, parse_file
 from src.planio import load_plan, save_plan
-from src.quality import render_with_quality
+from src.quality import LayoutConstraintError, render_with_quality
 from src.validate_plan import repair_deterministic, validate_plan
 
 
@@ -60,7 +61,11 @@ def main() -> int:
                     help="只输出计划 JSON 供预览/编辑（默认 %(const)s），不渲染")
     ap.add_argument("--plan", metavar="PLAN_JSON", default=None,
                     help="载入已确认/编辑过的计划 JSON 再渲染（跳过 LLM 规划）")
+    ap.add_argument("--constraints", metavar="CONSTRAINTS_JSON", default=None,
+                    help="约束档 JSON（主题锁定/数据来源/版式硬拒/结构要求），默认不启用")
     args = ap.parse_args()
+
+    constraints = load_constraints(args.constraints)
 
     if not os.path.isdir(args.input):
         print(f"[错误] 输入目录不存在：{args.input}")
@@ -80,14 +85,15 @@ def main() -> int:
         return 1
 
     print(f"[分析] 共提取 {len(blocks)} 个内容块，正在规划版式与主题…")
+    theme_name = (constraints.locked_theme if constraints else "") or args.theme
     plan = build_deck(blocks, title=args.title, subtitle=args.subtitle,
-                      author=args.author, theme_name=args.theme)
+                      author=args.author, theme_name=theme_name)
 
     if args.llm and not args.plan:
         if args.planner:
             print("[LLM] 正在用工具调用式规划器构建大纲…")
             from src.planner import plan_with_llm
-            planned = plan_with_llm(blocks)
+            planned = plan_with_llm(blocks, constraints=constraints)
             if planned is not None:
                 plan = planned
                 print(f"[LLM] 规划器完成：共 {len(plan.slides)} 页，主题"
@@ -116,8 +122,9 @@ def main() -> int:
             return 1
 
     # Phase B：渲染前规划校验 + 修复（无 Key 时仅做确定性修复）
+    known_sources = {b.source for b in blocks if b.source}
     if not args.no_plan_qa:
-        pqa_issues = validate_plan(plan)
+        pqa_issues = validate_plan(plan, constraints=constraints, known_sources=known_sources)
         if pqa_issues:
             print(f"[规划质检] 发现 {len(pqa_issues)} 项问题")
             if args.llm:
@@ -125,8 +132,10 @@ def main() -> int:
                 if repaired is not None:
                     plan = repaired
                     print("[规划质检] 已用 LLM 修复问题页")
-                    pqa_issues = validate_plan(plan)
-            plan, nfixed = repair_deterministic(plan)
+                    pqa_issues = validate_plan(plan, constraints=constraints,
+                                               known_sources=known_sources)
+            plan, nfixed = repair_deterministic(plan, constraints=constraints,
+                                                known_sources=known_sources)
             if nfixed:
                 print(f"[规划质检] 确定性修复 {nfixed} 项")
         else:
@@ -154,8 +163,13 @@ def main() -> int:
             print(f"[警告] 无法解析 {rot_file}：{e}")
 
     repairer = repair_render_with_llm if args.llm else None
-    out, issues, tries = render_with_quality(plan, args.output, repairer=repairer,
-                                             rotate_map=rotate_map)
+    hard_fail = bool(constraints and constraints.hard_fail_on_layout)
+    try:
+        out, issues, tries = render_with_quality(plan, args.output, repairer=repairer,
+                                                 rotate_map=rotate_map, hard_fail=hard_fail)
+    except LayoutConstraintError as e:
+        print(f"[错误] 版式约束未通过（hard_fail_on_layout）：{e}")
+        return 1
 
     # Phase D：读回内容 QA + 空壳页自愈（默认开启，--no-readback 关闭）
     if not args.no_readback:
@@ -167,9 +181,13 @@ def main() -> int:
             if ndrop:
                 print(f"[读回QA] 剔除 {ndrop} 个空壳/残缺页，重新渲染…")
                 plan = new_plan
-                out, issues, tries = render_with_quality(plan, args.output,
-                                                         repairer=repairer,
-                                                         rotate_map=rotate_map)
+                try:
+                    out, issues, tries = render_with_quality(
+                        plan, args.output, repairer=repairer,
+                        rotate_map=rotate_map, hard_fail=hard_fail)
+                except LayoutConstraintError as e:
+                    print(f"[错误] 版式约束未通过（hard_fail_on_layout）：{e}")
+                    return 1
         else:
             print("[读回QA] 通过")
 

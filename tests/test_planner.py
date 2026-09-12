@@ -2,6 +2,7 @@
 import json
 
 import src.planner as P
+from src.constraints import Constraints
 from src.models import DeckPlan
 
 
@@ -60,6 +61,39 @@ def test_plan_with_llm_stops_on_stall(monkeypatch):
     monkeypatch.setattr(P, "chat_tools", lambda m, t, **kw: _mk(next(calls)))
     plan = P.plan_with_llm([])
     assert plan is not None and len(plan.slides) >= 2
+
+
+def test_execute_tool_stores_source_ref():
+    plan = DeckPlan()
+    P.execute_tool(plan, "add_table", {
+        "title": "T", "headers": ["h"], "rows": [["1"]], "source_ref": "data.csv"})
+    P.execute_tool(plan, "add_chart", {
+        "title": "C", "chart_type": "pie", "categories": ["A"],
+        "series": [{"name": "S", "values": [1]}], "source_ref": "data.csv"})
+    assert plan.slides[0].table.source_ref == "data.csv"
+    assert plan.slides[1].chart.source_ref == "data.csv"
+
+
+def test_execute_tool_rejects_set_theme_when_locked():
+    plan = DeckPlan()
+    result = P.execute_tool(plan, "set_theme", {"theme": "tech"}, locked_theme="business")
+    assert result.startswith("ERROR")
+    assert plan.theme_name != "tech"
+
+
+def test_plan_with_llm_excludes_set_theme_tool_when_locked(monkeypatch):
+    seen_tools: list[list[dict]] = []
+
+    def fake_chat_tools(messages, tools, **kw):
+        seen_tools.append(tools)
+        return _mk([{"tool": "add_bullets", "args": {"title": "页", "bullets": ["1"]}},
+                    {"tool": "done", "args": {}}])
+
+    monkeypatch.setattr(P, "chat_tools", fake_chat_tools)
+    plan = P.plan_with_llm([], constraints=Constraints(locked_theme="business"))
+    assert plan is not None
+    assert plan.theme_name == "business"
+    assert all(t["function"]["name"] != "set_theme" for t in seen_tools[0])
 
 
 def test_finalize_guarantees_cover_and_thanks():

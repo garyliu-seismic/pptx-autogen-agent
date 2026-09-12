@@ -24,6 +24,7 @@ from dataclasses import dataclass
 
 import config
 from .analyzer import _split_long
+from .constraints import Constraints
 from .models import DeckPlan, SlideData
 
 # 与 analyzer.BULLETS_PER_SLIDE 保持一致
@@ -63,18 +64,53 @@ def _is_empty(sd: SlideData) -> bool:
     return False
 
 
-def validate_plan(plan: DeckPlan) -> list[PlanIssue]:
-    """校验 DeckPlan，返回所有问题（可多页重复）。"""
+def validate_plan(plan: DeckPlan, constraints: Constraints | None = None,
+                  known_sources: set[str] | None = None) -> list[PlanIssue]:
+    """校验 DeckPlan，返回所有问题（可多页重复）。
+
+    constraints 非空时额外做约束档校验（主题锁定/数据来源/结构要求），
+    这些问题一律标 error，交由 repair_deterministic 强制处理，不只是警告。
+    known_sources 是当前素材的 block.source 集合，用于核对 source_ref 是否真实存在
+    （防止 LLM 编一个看起来像来源的字符串）。
+    """
     issues: list[PlanIssue] = []
+    locked_theme = constraints.locked_theme if constraints else None
+    max_slides = (constraints.max_slides if constraints and constraints.max_slides
+                  else MAX_SLIDES)
 
     if plan.theme_name not in config.THEMES:
         issues.append(PlanIssue(0, "bad_theme",
                                 f"主题「{plan.theme_name}」不在预设内，将使用默认主题",
                                 "error"))
-    if len(plan.slides) > MAX_SLIDES:
+    elif locked_theme and plan.theme_name != locked_theme:
+        issues.append(PlanIssue(0, "bad_theme",
+                                f"主题「{plan.theme_name}」与锁定主题「{locked_theme}」不符",
+                                "error"))
+    if len(plan.slides) > max_slides:
         issues.append(PlanIssue(0, "too_many_slides",
-                                f"共 {len(plan.slides)} 页，超过上限 {MAX_SLIDES}",
+                                f"共 {len(plan.slides)} 页，超过上限 {max_slides}",
                                 "warning"))
+    if constraints:
+        if constraints.min_slides and len(plan.slides) < constraints.min_slides:
+            issues.append(PlanIssue(
+                0, "slide_count_out_of_range",
+                f"共 {len(plan.slides)} 页，少于要求的下限 {constraints.min_slides}",
+                "error"))
+        if constraints.max_slides and len(plan.slides) > constraints.max_slides:
+            issues.append(PlanIssue(
+                0, "slide_count_out_of_range",
+                f"共 {len(plan.slides)} 页，超过要求的上限 {constraints.max_slides}",
+                "error"))
+        for kind in constraints.required_kinds:
+            if not any(sd.kind == kind for sd in plan.slides):
+                issues.append(PlanIssue(
+                    0, "missing_required_kind", f"缺少必需页型「{kind}」", "error"))
+        for kind, cap in constraints.max_kind_counts.items():
+            count = sum(1 for sd in plan.slides if sd.kind == kind)
+            if count > cap:
+                issues.append(PlanIssue(
+                    0, "too_many_of_kind",
+                    f"页型「{kind}」共 {count} 页，超过上限 {cap}", "error"))
 
     for i, sd in enumerate(plan.slides, 1):
         if sd.kind not in ALL_KINDS:
@@ -106,6 +142,16 @@ def validate_plan(plan: DeckPlan) -> list[PlanIssue]:
         if sd.table and not sd.table.headers and not sd.table.rows:
             issues.append(PlanIssue(i, "bad_table",
                                     f"页 {i}「{sd.title}」表格为空", "error"))
+        if constraints and constraints.require_data_source:
+            for data, kind_name in ((sd.chart, "图表"), (sd.table, "表格")):
+                if data is None:
+                    continue
+                ref = data.source_ref.strip() if data.source_ref else ""
+                if not ref or (known_sources is not None and ref not in known_sources):
+                    issues.append(PlanIssue(
+                        i, "unsourced_data",
+                        f"页 {i}「{sd.title}」{kind_name}未标注真实来源，将被剔除",
+                        "error"))
         for p in sd.images:
             if not os.path.isfile(p):
                 issues.append(PlanIssue(
@@ -115,13 +161,16 @@ def validate_plan(plan: DeckPlan) -> list[PlanIssue]:
     return issues
 
 
-def repair_deterministic(plan: DeckPlan) -> tuple[DeckPlan, int]:
+def repair_deterministic(plan: DeckPlan,
+                         constraints: Constraints | None = None,
+                         known_sources: set[str] | None = None) -> tuple[DeckPlan, int]:
     """无需 LLM 的安全修复；返回 (新 plan, 修复项数)。输入 plan 不会被修改。"""
     plan = copy.deepcopy(plan)
     fixed = 0
+    locked_theme = constraints.locked_theme if constraints else None
 
-    if plan.theme_name not in config.THEMES:
-        plan.theme_name = config.DEFAULT_THEME
+    if plan.theme_name not in config.THEMES or (locked_theme and plan.theme_name != locked_theme):
+        plan.theme_name = locked_theme or config.DEFAULT_THEME
         fixed += 1
 
     out: list[SlideData] = []
@@ -134,6 +183,14 @@ def repair_deterministic(plan: DeckPlan) -> tuple[DeckPlan, int]:
         if _is_empty(sd) and sd.kind not in ("title", "section", "thanks"):
             fixed += 1
             continue
+
+        # 数据真实性约束：图表/表格没有可核实来源 -> 剔除该页
+        if constraints and constraints.require_data_source and sd.kind in ("chart", "table"):
+            data = sd.chart if sd.kind == "chart" else sd.table
+            ref = data.source_ref.strip() if data is not None and data.source_ref else ""
+            if not ref or (known_sources is not None and ref not in known_sources):
+                fixed += 1
+                continue
 
         # 图片不存在 -> 移除；画廊因此变空 -> 删除该页
         kept = [p for p in sd.images if os.path.isfile(p)]
@@ -205,5 +262,38 @@ def repair_deterministic(plan: DeckPlan) -> tuple[DeckPlan, int]:
             out.append(SlideData(title="谢谢 / Thank You", kind="thanks"))
         fixed += 1
 
+    if constraints:
+        # 结构约束：每类页型数量上限 -> 保留前 N 页，超出的丢弃
+        for kind, cap in constraints.max_kind_counts.items():
+            kept_count = 0
+            trimmed: list[SlideData] = []
+            for sd in out:
+                if sd.kind == kind:
+                    kept_count += 1
+                    if kept_count > cap:
+                        fixed += 1
+                        continue
+                trimmed.append(sd)
+            out = trimmed
+
+        # 结构约束：必需页型缺失 -> 补一个最小化默认页
+        for kind in constraints.required_kinds:
+            if not any(sd.kind == kind for sd in out):
+                out.append(_default_slide_for_kind(kind, plan))
+                fixed += 1
+
     plan.slides = out
     return plan, fixed
+
+
+def _default_slide_for_kind(kind: str, plan: DeckPlan) -> SlideData:
+    """为缺失的必需页型生成一个最小化的默认页。"""
+    if kind == "title":
+        return SlideData(title=plan.title or "演示文稿", kind="title")
+    if kind == "thanks":
+        return SlideData(title="谢谢 / Thank You", kind="thanks")
+    if kind == "section":
+        return SlideData(title="章节", kind="section")
+    if kind in ("bullets", "cards", "summary"):
+        return SlideData(title="要点", kind=kind, bullets=["（待补充）"])
+    return SlideData(title=kind, kind=kind)

@@ -68,7 +68,9 @@ PLAN_TOOLS: list[dict] = [
         "parameters": {"type": "object", "properties": {
             "title": {"type": "string"},
             "headers": {"type": "array", "items": {"type": "string"}},
-            "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}},
+            "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
+            "source_ref": {"type": "string",
+                           "description": "数据来源（素材文件名或片段说明），标注你是从哪份素材抄的这些数字"}},
             "required": ["title", "headers", "rows"]}}},
     {"type": "function", "function": {"name": "add_chart",
         "description": "添加原生图表页。chart_type: column/bar/line/pie。数据必须来自素材。",
@@ -79,7 +81,9 @@ PLAN_TOOLS: list[dict] = [
             "series": {"type": "array", "items": {"type": "object", "properties": {
                 "name": {"type": "string"},
                 "values": {"type": "array", "items": {"type": "number"}}},
-                "required": ["name", "values"]}}},
+                "required": ["name", "values"]}},
+            "source_ref": {"type": "string",
+                           "description": "数据来源（素材文件名或片段说明），标注你是从哪份素材抄的这些数字"}},
             "required": ["title", "chart_type", "categories", "series"]}}},
     {"type": "function", "function": {"name": "add_summary",
         "description": "添加总结页（points 最多 6 条）。",
@@ -101,8 +105,13 @@ PLAN_TOOLS: list[dict] = [
 _ALLOWED_CHART = ("column", "bar", "line", "pie")
 
 
-def execute_tool(plan: DeckPlan, name: str, args: dict) -> str:
-    """执行一个计划级工具调用，就地修改 plan。返回描述；ERROR 开头的表示参数非法。"""
+def execute_tool(plan: DeckPlan, name: str, args: dict,
+                 locked_theme: str | None = None) -> str:
+    """执行一个计划级工具调用，就地修改 plan。返回描述；ERROR 开头的表示参数非法。
+
+    locked_theme 非空时代表主题已被约束档锁定：set_theme 会被拒绝（防御性检查——
+    正常情况下调用方应已把 set_theme 从工具列表里移除，这里是兜底）。
+    """
     try:
         if name == "set_title":
             plan.title = str(args.get("title") or plan.title or "演示文稿")
@@ -110,6 +119,8 @@ def execute_tool(plan: DeckPlan, name: str, args: dict) -> str:
                 plan.subtitle = str(args["subtitle"])
             return f"OK 封面标题={plan.title}"
         if name == "set_theme":
+            if locked_theme:
+                return f"ERROR 主题已锁定为 {locked_theme}，不可更改"
             t = args.get("theme")
             if t in config.THEMES:
                 plan.theme_name = t
@@ -153,7 +164,8 @@ def execute_tool(plan: DeckPlan, name: str, args: dict) -> str:
                 return "ERROR headers 不能为空"
             plan.slides.append(SlideData(
                 title=str(args.get("title") or "数据表"), kind="table",
-                table=TableData(headers=headers, rows=rows)))
+                table=TableData(headers=headers, rows=rows,
+                                source_ref=str(args.get("source_ref") or ""))))
             return f"OK 表格 {len(rows)} 行"
         if name == "add_chart":
             ct = args.get("chart_type")
@@ -166,7 +178,8 @@ def execute_tool(plan: DeckPlan, name: str, args: dict) -> str:
             plan.slides.append(SlideData(
                 title=str(args.get("title") or "数据图表"), kind="chart",
                 chart=ChartData(chart_type=ct, categories=cats, series=ser,
-                                title=str(args.get("title") or ""))))
+                                title=str(args.get("title") or ""),
+                                source_ref=str(args.get("source_ref") or ""))))
             return f"OK 图表 {ct} {len(cats)} 类 {len(ser)} 系列"
         if name == "add_summary":
             pts = [str(x) for x in (args.get("points") or [])]
@@ -341,14 +354,22 @@ def _parse_text_tool_calls(content: str) -> list[dict]:
     return out
 
 
-def plan_with_llm(blocks, max_turns: int = MAX_TURNS) -> DeckPlan | None:
+def plan_with_llm(blocks, max_turns: int = MAX_TURNS, constraints=None) -> DeckPlan | None:
     """工具调用式规划主循环（带历史的多轮 function calling）；失败/无 Key 返回 None。
 
     维护完整消息历史（system/user/assistant含tool_calls/tool结果），
     模型才能记住已完成的步骤并继续添加页；端点不支持 function calling 时
     回退文本 JSON 一次执行。
+
+    constraints 非空且设置了 locked_theme 时：预先锁定 plan.theme_name，
+    并把 set_theme 从工具列表里剔除，防止 LLM 中途改主题。
     """
+    locked_theme = getattr(constraints, "locked_theme", None) if constraints else None
     plan = DeckPlan()
+    if locked_theme:
+        plan.theme_name = locked_theme
+    tools = [t for t in PLAN_TOOLS if not locked_theme
+             or t["function"]["name"] != "set_theme"]
     system = build_system_prompt()
     messages: list[dict] = [
         {"role": "system", "content": system},
@@ -358,14 +379,15 @@ def plan_with_llm(blocks, max_turns: int = MAX_TURNS) -> DeckPlan | None:
     last_count = 0
     stall = 0
     for _ in range(max_turns):
-        msg = chat_tools(messages, PLAN_TOOLS)
+        msg = chat_tools(messages, tools)
         if not msg:
             break
         tool_calls = msg.get("tool_calls")
         if not tool_calls:
             # 端点不支持 function calling -> 文本 JSON 兜底，一次执行完
             for c in _parse_text_tool_calls(msg.get("content")):
-                result = execute_tool(plan, c.get("tool"), c.get("args") or {})
+                result = execute_tool(plan, c.get("tool"), c.get("args") or {},
+                                      locked_theme=locked_theme)
                 if result == "DONE":
                     done = True
             break
@@ -382,7 +404,8 @@ def plan_with_llm(blocks, max_turns: int = MAX_TURNS) -> DeckPlan | None:
             except Exception:
                 args = {}
             result = execute_tool(plan, name,
-                                  args if isinstance(args, dict) else {})
+                                  args if isinstance(args, dict) else {},
+                                  locked_theme=locked_theme)
             if result == "DONE":
                 done = True
             elif result.startswith("OK") or not result.startswith("ERROR"):

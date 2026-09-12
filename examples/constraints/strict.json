@@ -1,0 +1,9 @@
+{
+  "locked_theme": "business",
+  "require_data_source": true,
+  "hard_fail_on_layout": false,
+  "required_kinds": ["title", "thanks"],
+  "max_kind_counts": {"chart": 2},
+  "min_slides": 3,
+  "max_slides": 20
+}

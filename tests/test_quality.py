@@ -70,3 +70,28 @@ def test_render_with_quality_none_repairer_no_recursion(monkeypatch, tmp_path):
         repairer=lambda p, i: None)
     assert state["renders"] == 2   # 无修复器返回 -> 不递归
     assert issues
+
+
+def test_render_with_quality_hard_fail_raises(monkeypatch, tmp_path):
+    plan = _plan()
+
+    monkeypatch.setattr(rd, "render", lambda p, path, **kw: path)
+    monkeypatch.setattr(q, "analyze", lambda path: [q.Issue(1, "overflow_x", 1.0, "f")])
+    try:
+        q.render_with_quality(
+            plan, str(tmp_path / "x.pptx"), max_tries=2, quiet=True,
+            repairer=lambda p, i: None, hard_fail=True)
+        assert False, "expected LayoutConstraintError"
+    except q.LayoutConstraintError as e:
+        assert e.issues
+
+
+def test_render_with_quality_hard_fail_false_keeps_old_behavior(monkeypatch, tmp_path):
+    plan = _plan()
+
+    monkeypatch.setattr(rd, "render", lambda p, path, **kw: path)
+    monkeypatch.setattr(q, "analyze", lambda path: [q.Issue(1, "overflow_x", 1.0, "f")])
+    out, issues, tries = q.render_with_quality(
+        plan, str(tmp_path / "x.pptx"), max_tries=2, quiet=True,
+        repairer=lambda p, i: None, hard_fail=False)
+    assert issues

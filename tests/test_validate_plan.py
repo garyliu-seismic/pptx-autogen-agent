@@ -1,5 +1,6 @@
 """validate_plan：规划前校验 + 确定性修复。"""
-from src.models import DeckPlan, SlideData
+from src.constraints import Constraints
+from src.models import ChartData, DeckPlan, SlideData, TableData
 from src.validate_plan import repair_deterministic, validate_plan
 
 
@@ -46,3 +47,115 @@ def test_repair_deterministic_keeps_min_two_slides():
     plan = _plan(SlideData(kind="bullets", title="空", bullets=[]), theme="nope")
     newp, _ = repair_deterministic(plan)
     assert len(newp.slides) >= 2
+
+
+# ---------------------------------------------------------------------------
+# 约束档：数据真实性
+# ---------------------------------------------------------------------------
+def test_validate_catches_unsourced_chart():
+    plan = _plan(
+        SlideData(kind="title"),
+        SlideData(kind="chart", title="图",
+                  chart=ChartData(categories=["a"], series=[{"name": "x", "values": [1]}])),
+        SlideData(kind="thanks"),
+    )
+    c = Constraints(require_data_source=True)
+    issues = validate_plan(plan, constraints=c, known_sources={"data.csv"})
+    assert any(i.kind == "unsourced_data" for i in issues)
+
+
+def test_validate_accepts_chart_with_known_source():
+    plan = _plan(
+        SlideData(kind="title"),
+        SlideData(kind="chart", title="图",
+                  chart=ChartData(categories=["a"], series=[{"name": "x", "values": [1]}],
+                                  source_ref="data.csv")),
+        SlideData(kind="thanks"),
+    )
+    c = Constraints(require_data_source=True)
+    issues = validate_plan(plan, constraints=c, known_sources={"data.csv"})
+    assert not any(i.kind == "unsourced_data" for i in issues)
+
+
+def test_repair_deterministic_drops_unsourced_table():
+    plan = _plan(
+        SlideData(kind="title"),
+        SlideData(kind="table", title="表",
+                  table=TableData(headers=["h"], rows=[["1"]])),
+        SlideData(kind="thanks"),
+    )
+    c = Constraints(require_data_source=True)
+    newp, fixed = repair_deterministic(plan, constraints=c, known_sources={"data.csv"})
+    assert not any(s.kind == "table" for s in newp.slides)
+    assert fixed >= 1
+
+
+# ---------------------------------------------------------------------------
+# 约束档：品牌/主题锁定
+# ---------------------------------------------------------------------------
+def test_validate_catches_locked_theme_mismatch():
+    plan = _plan(theme="modern")
+    c = Constraints(locked_theme="business")
+    issues = validate_plan(plan, constraints=c)
+    assert any(i.kind == "bad_theme" and i.severity == "error" for i in issues)
+
+
+def test_repair_deterministic_forces_locked_theme():
+    plan = _plan(theme="modern")
+    c = Constraints(locked_theme="business")
+    newp, _ = repair_deterministic(plan, constraints=c)
+    assert newp.theme_name == "business"
+
+
+# ---------------------------------------------------------------------------
+# 约束档：结构
+# ---------------------------------------------------------------------------
+def test_validate_catches_missing_required_kind():
+    plan = _plan(SlideData(kind="title"), SlideData(kind="bullets", bullets=["a"]))
+    c = Constraints(required_kinds=["thanks"])
+    issues = validate_plan(plan, constraints=c)
+    assert any(i.kind == "missing_required_kind" for i in issues)
+
+
+def test_repair_deterministic_adds_missing_required_kind():
+    plan = _plan(SlideData(kind="title"), SlideData(kind="bullets", bullets=["a"]))
+    c = Constraints(required_kinds=["thanks"])
+    newp, fixed = repair_deterministic(plan, constraints=c)
+    assert any(s.kind == "thanks" for s in newp.slides)
+    assert fixed >= 1
+
+
+def test_validate_catches_too_many_of_kind():
+    plan = _plan(
+        SlideData(kind="title"),
+        SlideData(kind="chart", chart=ChartData(categories=["a"],
+                                                series=[{"name": "x", "values": [1]}])),
+        SlideData(kind="chart", chart=ChartData(categories=["a"],
+                                                series=[{"name": "x", "values": [1]}])),
+        SlideData(kind="thanks"),
+    )
+    c = Constraints(max_kind_counts={"chart": 1})
+    issues = validate_plan(plan, constraints=c)
+    assert any(i.kind == "too_many_of_kind" for i in issues)
+
+
+def test_repair_deterministic_trims_excess_kind():
+    plan = _plan(
+        SlideData(kind="title"),
+        SlideData(kind="chart", title="c1",
+                  chart=ChartData(categories=["a"], series=[{"name": "x", "values": [1]}])),
+        SlideData(kind="chart", title="c2",
+                  chart=ChartData(categories=["a"], series=[{"name": "x", "values": [1]}])),
+        SlideData(kind="thanks"),
+    )
+    c = Constraints(max_kind_counts={"chart": 1})
+    newp, fixed = repair_deterministic(plan, constraints=c)
+    assert sum(1 for s in newp.slides if s.kind == "chart") == 1
+    assert fixed >= 1
+
+
+def test_validate_catches_slide_count_out_of_range():
+    plan = _plan(SlideData(kind="title"), SlideData(kind="thanks"))
+    c = Constraints(min_slides=5)
+    issues = validate_plan(plan, constraints=c)
+    assert any(i.kind == "slide_count_out_of_range" for i in issues)
