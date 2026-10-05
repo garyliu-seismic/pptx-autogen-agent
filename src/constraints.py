@@ -1,12 +1,15 @@
 """生成约束档（constraints profile）—— 让调用方对 auto gen 结果加更多硬控制。
 
 默认不启用（``--constraints`` 不传时 main.py 各处都拿到 ``None``，行为与之前完全一致）。
-四个维度：
+五个维度：
 
   1. 数据真实性 —— ``require_data_source``：图表/表格页必须标注真实来源，否则剔除。
   2. 版式/几何 —— ``hard_fail_on_layout``：质检未消除的严重问题不再「将就」，直接报错。
   3. 品牌/主题 —— ``locked_theme``：锁定主题，自动检测与 LLM 都不能改。
   4. 结构 —— ``required_kinds`` / ``max_kind_counts`` / ``min_slides`` / ``max_slides``。
+  5. 参考文档 —— ``reference_deck``：真实 pptx（或 SRDP zip）路径，main.py 据此把
+     ``exact_slides`` 设成该文档的页数、``locked_theme`` 设成从其 slide master
+     提取到的真实配色/字体（见 src/reference_deck.py）。
 """
 from __future__ import annotations
 
@@ -23,6 +26,8 @@ class Constraints:
     max_kind_counts: dict[str, int] = field(default_factory=dict)
     min_slides: int | None = None
     max_slides: int | None = None
+    reference_deck: str | None = None
+    exact_slides: int | None = None
 
 
 def load_constraints(path: str | None) -> Constraints | None:
@@ -39,4 +44,6 @@ def load_constraints(path: str | None) -> Constraints | None:
         max_kind_counts={str(k): int(v) for k, v in (d.get("max_kind_counts") or {}).items()},
         min_slides=d.get("min_slides"),
         max_slides=d.get("max_slides"),
+        reference_deck=d.get("reference_deck") or None,
+        exact_slides=d.get("exact_slides"),
     )

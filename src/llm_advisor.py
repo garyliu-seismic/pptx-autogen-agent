@@ -45,12 +45,50 @@ def available() -> bool:
     return bool(os.environ.get("OPENAI_API_KEY"))
 
 
+def _temperature() -> float | None:
+    """读取 OPENAI_TEMPERATURE；'none'/'omit' 表示不传 temperature 字段（gpt-5 系列要求）。"""
+    raw = os.environ.get("OPENAI_TEMPERATURE", "").strip().lower()
+    if raw in ("none", "omit", "default", ""):
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _build_payload(model: str, messages: list[dict],
+                   temperature: float | None = None,
+                   tools: list[dict] | None = None) -> dict:
+    """构造请求 payload；gpt-5 系列不传 temperature，用 max_completion_tokens 替代 max_tokens。"""
+    payload: dict = {"model": model, "messages": messages}
+    # gpt-5 / o1 / o3 / o4 系列拒绝 temperature 字段
+    model_lower = model.lower()
+    is_gpt5_family = any(model_lower.startswith(p) for p in
+                         ("gpt-5", "o1", "o3", "o4"))
+    env_temp = _temperature()
+    if not is_gpt5_family:
+        t = env_temp if env_temp is not None else temperature
+        if t is not None:
+            payload["temperature"] = t
+    # max_completion_tokens (gpt-5) vs max_tokens (others)
+    mct = os.environ.get("OPENAI_MAX_COMPLETION_TOKENS", "").strip()
+    if mct:
+        key_name = "max_completion_tokens" if is_gpt5_family else "max_tokens"
+        try:
+            payload[key_name] = int(mct)
+        except ValueError:
+            pass
+    if tools:
+        payload["tools"] = tools
+    return payload
+
+
 def chat_json(system: str, user: str, *, timeout: int = 90,
               temperature: float = 0.4) -> dict | None:
     """调用 OpenAI 兼容端点并要求返回 JSON 对象；失败/超时/无 Key 返回 None。
 
-    兼容 OpenAI / DeepSeek / 本地 Ollama 等端点（OPENAI_BASE_URL / OPENAI_MODEL）。
-    供 llm_advisor.suggest 与 llm_repair 复用。
+    兼容 OpenAI / DeepSeek / Azure AI Foundry / 本地 Ollama 等端点。
+    gpt-5 系列自动省略 temperature 字段。
     """
     if not available():
         return None
@@ -58,14 +96,10 @@ def chat_json(system: str, user: str, *, timeout: int = 90,
         base = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
         model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
         key = os.environ["OPENAI_API_KEY"]
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "temperature": temperature,
-        }
+        payload = _build_payload(model,
+                                 [{"role": "system", "content": system},
+                                  {"role": "user", "content": user}],
+                                 temperature=temperature)
         req = urllib.request.Request(
             base.rstrip("/") + "/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
@@ -101,15 +135,11 @@ def chat_json_tools(system: str, user: str, tools: list[dict], *,
         base = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
         model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
         key = os.environ["OPENAI_API_KEY"]
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "tools": tools,
-            "temperature": temperature,
-        }
+        payload = _build_payload(model,
+                                 [{"role": "system", "content": system},
+                                  {"role": "user", "content": user}],
+                                 temperature=temperature,
+                                 tools=tools)
         req = urllib.request.Request(
             base.rstrip("/") + "/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
@@ -174,12 +204,7 @@ def chat_tools(messages: list[dict], tools: list[dict], *,
         base = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
         model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
         key = os.environ["OPENAI_API_KEY"]
-        payload = {
-            "model": model,
-            "messages": messages,
-            "tools": tools,
-            "temperature": temperature,
-        }
+        payload = _build_payload(model, messages, temperature=temperature, tools=tools)
         req = urllib.request.Request(
             base.rstrip("/") + "/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
@@ -217,11 +242,18 @@ def suggest(blocks: list[Block]) -> dict | None:
     """返回 {title, subtitle, theme, outline, summary} 或 None。"""
     if not available():
         return None
+    import config as _cfg
+    theme_opts = "|".join(_cfg.THEMES.keys())
     system = (
-        "你是一个演示文稿规划助手。请根据用户提供的素材，提炼核心内容并规划一份 PPT 大纲。"
-        "只输出一个 JSON 对象，不要输出任何其它文字或 markdown。JSON 格式："
-        '{"title":"封面标题","subtitle":"副标题","theme":"tech|business|finance|health|education|nature|elegant|modern",'
-        '"outline":[{"title":"页标题","kind":"section|bullets","bullets":["要点1","要点2"]}],'
-        '"summary":["总结要点1","总结要点2"]}'
+        "你是一个演示文稿设计规划助手。请根据素材提炼核心内容，并规划一份专业 PPT 大纲。"
+        "只输出一个 JSON 对象，不要包含 markdown 代码块。JSON 格式："
+        '{"title":"封面标题","subtitle":"副标题",'
+        f'"theme":"{theme_opts}",'
+        '"outline":[{"title":"页标题","kind":"section|bullets|cards|timeline","bullets":["要点1"]}],'
+        '"summary":["总结要点1"]}\n'
+        "主题选择原则：深色科技/AI→ai或tech；商务财务→business或finance；"
+        "企业报告→corporate；高端演讲→dark_pro；极简风格→minimal；"
+        "医疗健康→medical；高端品牌/奖项→luxury；年轻互联网→fresh；"
+        "学术研究→academic；政府党政→government。"
     )
     return chat_json(system, _serialize(blocks))

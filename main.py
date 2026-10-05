@@ -14,12 +14,13 @@ import os
 
 import config
 from src.analyzer import apply_suggestion, build_deck
-from src.constraints import load_constraints
+from src.constraints import Constraints, load_constraints
 from src.llm_advisor import suggest
 from src.llm_repair import repair_plan_with_llm, repair_render_with_llm
 from src.parsers import SUPPORTED_EXT, parse_file
 from src.planio import load_plan, save_plan
 from src.quality import LayoutConstraintError, render_with_quality
+from src.reference_deck import ReferenceDeckError, resolve_reference
 from src.validate_plan import repair_deterministic, validate_plan
 
 
@@ -50,6 +51,12 @@ def main() -> int:
                     help="调用 LLM 规划大纲（需设置 OPENAI_API_KEY）")
     ap.add_argument("--planner", action="store_true",
                     help="用工具调用式规划器构建大纲（需同时 --llm，兼容 function calling）")
+    ap.add_argument("--animation", action="store_true",
+                    help="开启动画：每页按页型自动选择淡入/飞入/缩放等进入动画")
+    ap.add_argument("--bg-images", metavar="JSON_OR_DIR", default=None,
+                    help="分隔页照片：传入 JSON 字典（'{\"5\":\"path.jpg\"}')或目录路径（按文件名顺序匹配分隔页）")
+    ap.add_argument("--export-pdf", action="store_true",
+                    help="输出 PPTX 后额外导出 PDF（需安装 LibreOffice）")
     ap.add_argument("--preview", action="store_true",
                     help="生成后用 LibreOffice 渲染每页 PNG 预览（需安装 LibreOffice）")
     ap.add_argument("--no-plan-qa", action="store_true",
@@ -63,9 +70,29 @@ def main() -> int:
                     help="载入已确认/编辑过的计划 JSON 再渲染（跳过 LLM 规划）")
     ap.add_argument("--constraints", metavar="CONSTRAINTS_JSON", default=None,
                     help="约束档 JSON（主题锁定/数据来源/版式硬拒/结构要求），默认不启用")
+    ap.add_argument("--reference-deck", metavar="PPTX_OR_SRDP_ZIP", default=None,
+                    help="参考文档（.pptx 或 SRDP .zip）：页数强制对齐该文档，"
+                         "主题色/字体取自其 slide master，默认不启用")
     args = ap.parse_args()
 
     constraints = load_constraints(args.constraints)
+
+    ref = None
+    ref_path = args.reference_deck or (constraints.reference_deck if constraints else None)
+    if ref_path:
+        try:
+            ref = resolve_reference(ref_path)
+        except ReferenceDeckError as e:
+            print(f"[错误] 参考文档解析失败：{e}")
+            return 1
+        config.THEMES["reference"] = ref.theme
+        if constraints is None:
+            constraints = Constraints()
+        constraints.reference_deck = ref_path
+        constraints.exact_slides = ref.slide_count
+        constraints.locked_theme = "reference"
+        print(f"[参考文档] {ref_path} -> {ref.slide_count} 页，"
+              f"主题色/字体已从其 slide master 提取（锁定为「reference」主题）")
 
     if not os.path.isdir(args.input):
         print(f"[错误] 输入目录不存在：{args.input}")
@@ -162,11 +189,50 @@ def main() -> int:
         except Exception as e:
             print(f"[警告] 无法解析 {rot_file}：{e}")
 
+    # 解析 --bg-images
+    slide_images: dict = {}
+    if args.bg_images:
+        import json as _json
+        import glob as _glob
+        bg_arg = args.bg_images.strip()
+        if bg_arg.startswith("{"):
+            try:
+                raw = _json.loads(bg_arg)
+                slide_images = {int(k): v for k, v in raw.items() if os.path.isfile(v)}
+                print(f"[照片] 已载入 {len(slide_images)} 张分隔页照片")
+            except Exception as e:
+                print(f"[警告] 无法解析 --bg-images JSON：{e}")
+        elif os.path.isdir(bg_arg):
+            img_files = sorted(
+                f for f in _glob.glob(os.path.join(bg_arg, "*"))
+                if f.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))
+            )
+            # 按文件顺序匹配分隔页（kind=="section"）
+            section_pages = [
+                i + 1 for i, s in enumerate(plan.slides)
+                if s.kind == "section"
+            ]
+            for j, pg in enumerate(section_pages):
+                if j < len(img_files):
+                    slide_images[pg] = img_files[j]
+            print(f"[照片] 已为 {len(slide_images)} 张分隔页匹配照片")
+        elif os.path.isfile(bg_arg):
+            # 单张照片应用到所有分隔页
+            for i, s in enumerate(plan.slides):
+                if s.kind == "section":
+                    slide_images[i + 1] = bg_arg
+            print(f"[照片] 已将单张照片应用到 {len(slide_images)} 张分隔页")
+
     repairer = repair_render_with_llm if args.llm else None
     hard_fail = bool(constraints and constraints.hard_fail_on_layout)
+    # 有参考文档时顺带把它的真实 slide layout 当底稿用（画布尺寸+母版背景/logo等）
+    template_path = ref.source_path if ref else None
     try:
         out, issues, tries = render_with_quality(plan, args.output, repairer=repairer,
-                                                 rotate_map=rotate_map, hard_fail=hard_fail)
+                                                 rotate_map=rotate_map, hard_fail=hard_fail,
+                                                 template_path=template_path,
+                                                 animation=args.animation,
+                                                 slide_images=slide_images)
     except LayoutConstraintError as e:
         print(f"[错误] 版式约束未通过（hard_fail_on_layout）：{e}")
         return 1
@@ -184,7 +250,9 @@ def main() -> int:
                 try:
                     out, issues, tries = render_with_quality(
                         plan, args.output, repairer=repairer,
-                        rotate_map=rotate_map, hard_fail=hard_fail)
+                        rotate_map=rotate_map, hard_fail=hard_fail,
+                        template_path=template_path,
+                        animation=args.animation)
                 except LayoutConstraintError as e:
                     print(f"[错误] 版式约束未通过（hard_fail_on_layout）：{e}")
                     return 1
@@ -199,6 +267,14 @@ def main() -> int:
         from src.quality import summary
         print(f"       [提示] {summary(issues)}")
 
+    if args.export_pdf:
+        pdf_path = os.path.splitext(os.path.abspath(out))[0] + ".pdf"
+        ok = _export_pdf(out, pdf_path)
+        if ok:
+            print(f"[PDF] 已导出：{pdf_path}")
+        else:
+            print("[PDF] 导出失败（请确认已安装 LibreOffice 并加入 PATH）")
+
     if args.preview:
         try:
             from tools.render_preview import render_pipeline, print_install_hint
@@ -209,6 +285,37 @@ def main() -> int:
         except RuntimeError:
             print_install_hint()
     return 0
+
+
+def _export_pdf(pptx_path: str, pdf_path: str) -> bool:
+    """LibreOffice headless 将 pptx 转为 PDF。成功返回 True。"""
+    import subprocess
+    import shutil
+
+    # 尝试常见的 LibreOffice 可执行文件名
+    for exe in ("libreoffice", "soffice",
+                r"C:\Program Files\LibreOffice\program\soffice.exe",
+                r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"):
+        if shutil.which(exe) or os.path.isfile(exe):
+            cmd = [
+                exe, "--headless", "--invisible",
+                "--convert-to", "pdf",
+                "--outdir", os.path.dirname(pdf_path),
+                pptx_path,
+            ]
+            try:
+                result = subprocess.run(cmd, timeout=120,
+                                        capture_output=True, text=True)
+                # LibreOffice 输出的文件名可能就是同名 pdf
+                expected = os.path.splitext(pptx_path)[0] + ".pdf"
+                # 如果输出目录不同则移动
+                if os.path.isfile(expected) and expected != pdf_path:
+                    import shutil as _sh
+                    _sh.move(expected, pdf_path)
+                return os.path.isfile(pdf_path)
+            except Exception:
+                return False
+    return False
 
 
 if __name__ == "__main__":

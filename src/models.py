@@ -73,18 +73,39 @@ class Block:
 # 版面规划结果
 # ---------------------------------------------------------------------------
 @dataclass
+class MetricData:
+    """KPI 指标卡数据（用于 kpi 页型）。"""
+    label: str = ""                # 指标名称，如 "营收增长"
+    value: str = ""                # 数值字符串，如 "23%" / "1.2亿"
+    trend: str = "flat"            # 趋势：up / down / flat
+    note: str = ""                 # 补充说明，如 "同比上季度"
+    color: str = ""                # 指定颜色（空=自动按 trend 着色）
+
+
+@dataclass
 class SlideData:
     """单页幻灯片的内容描述。"""
     title: str = ""
-    kind: str = "bullets"    # title/agenda/section/bullets/table/chart/gallery/summary/thanks
+    kind: str = "bullets"
+    # kind 合法值：
+    #   结构页: title / section / agenda / thanks
+    #   内容页: bullets / cards / timeline / table / chart
+    #           gallery / image / figure / photo_timeline / summary
+    #   新增页型: kpi / quote / process / comparison
     bullets: list[str] = field(default_factory=list)
     table: Optional[TableData] = None
     chart: Optional[ChartData] = None
     images: list[str] = field(default_factory=list)
     notes: str = ""
-    takeaway: str = ""     # 一句话结论（图文页右下角）
+    takeaway: str = ""     # 一句话结论（图文页右下角 / quote 页引语内容）
     level: int = 0
-    source: str = ""       # 数据来源标注（渲染为页脚小字，如“各模型官方报告”）
+    source: str = ""       # 数据来源标注（渲染为页脚小字，如"各模型官方报告"）
+    # ── 新增页型专用字段 ──────────────────────────────────────────────────
+    metrics: list[MetricData] = field(default_factory=list)  # kpi 页专用
+    author: str = ""       # quote 页署名 / comparison 页左栏标签
+    label_left: str = ""   # comparison 页左侧标签（如 "现状" / "Before"）
+    label_right: str = ""  # comparison 页右侧标签（如 "目标" / "After"）
+    bullets_right: list[str] = field(default_factory=list)  # comparison 页右栏要点
 
 
 @dataclass

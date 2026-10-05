@@ -34,7 +34,8 @@ MAX_BULLET_LEN = 80
 MAX_SLIDES = 40
 
 CONTENT_KINDS = {"agenda", "bullets", "cards", "timeline", "table", "chart",
-                 "gallery", "image", "figure", "summary", "photo_timeline"}
+                 "gallery", "image", "figure", "summary", "photo_timeline",
+                 "kpi", "quote", "process", "comparison"}
 ALL_KINDS = CONTENT_KINDS | {"title", "section", "thanks"}
 
 
@@ -101,6 +102,11 @@ def validate_plan(plan: DeckPlan, constraints: Constraints | None = None,
                 0, "slide_count_out_of_range",
                 f"共 {len(plan.slides)} 页，超过要求的上限 {constraints.max_slides}",
                 "error"))
+        if constraints.exact_slides and len(plan.slides) != constraints.exact_slides:
+            issues.append(PlanIssue(
+                0, "slide_count_mismatch",
+                f"共 {len(plan.slides)} 页，与参考文档页数 {constraints.exact_slides} 不一致",
+                "error"))
         for kind in constraints.required_kinds:
             if not any(sd.kind == kind for sd in plan.slides):
                 issues.append(PlanIssue(
@@ -123,7 +129,7 @@ def validate_plan(plan: DeckPlan, constraints: Constraints | None = None,
                                     "warning"))
 
         if sd.bullets:
-            if sd.kind in ("bullets", "cards") \
+            if sd.kind in ("bullets", "cards", "kpi", "process", "comparison") \
                     and len(sd.bullets) > MAX_BULLETS_PER_SLIDE:
                 issues.append(PlanIssue(
                     i, "too_many_bullets",
@@ -220,7 +226,7 @@ def repair_deterministic(plan: DeckPlan,
 
         # 长要点拆分（文本类页型）
         if sd.kind in ("bullets", "cards", "timeline", "agenda",
-                       "summary", "figure"):
+                       "summary", "figure", "process", "comparison", "kpi"):
             pieces: list[str] = []
             bullet_changed = False
             for b in sd.bullets:
@@ -282,8 +288,44 @@ def repair_deterministic(plan: DeckPlan,
                 out.append(_default_slide_for_kind(kind, plan))
                 fixed += 1
 
+        # 参考文档约束：页数硬对齐到 exact_slides（如与 MainLiveDoc 页数一致）
+        if constraints.exact_slides and len(out) != constraints.exact_slides:
+            out = _fit_exact_slide_count(out, constraints.exact_slides)
+            fixed += 1
+
     plan.slides = out
     return plan, fixed
+
+
+def _fit_exact_slide_count(slides: list[SlideData], target: int) -> list[SlideData]:
+    """把页数硬对齐到 target：优先裁剪/补充内容页，尽量保留结构页
+    （title/section/thanks）在首尾的位置不变。"""
+    slides = list(slides)
+
+    # 裁剪：从后往前先去掉内容页，结构页留到最后再考虑
+    i = len(slides) - 1
+    while len(slides) > target and i >= 0:
+        if slides[i].kind in CONTENT_KINDS:
+            del slides[i]
+        i -= 1
+    # 内容页已经裁不动了仍然超出 -> 从后往前硬删，至少保留 1 页
+    while len(slides) > target and len(slides) > 1:
+        del slides[-1]
+
+    # 补充：页数不足 -> 在结尾页（若有）之前插入通用分隔页填满
+    if len(slides) < target:
+        insert_at = len(slides)
+        for j, sd in enumerate(slides):
+            if sd.kind == "thanks":
+                insert_at = j
+                break
+        n = 1
+        while len(slides) < target:
+            slides.insert(insert_at, SlideData(title=f"补充 {n}", kind="section"))
+            insert_at += 1
+            n += 1
+
+    return slides
 
 
 def _default_slide_for_kind(kind: str, plan: DeckPlan) -> SlideData:

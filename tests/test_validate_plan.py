@@ -159,3 +159,43 @@ def test_validate_catches_slide_count_out_of_range():
     c = Constraints(min_slides=5)
     issues = validate_plan(plan, constraints=c)
     assert any(i.kind == "slide_count_out_of_range" for i in issues)
+
+
+def test_validate_catches_slide_count_mismatch_against_reference():
+    plan = _plan(SlideData(kind="title"), SlideData(kind="thanks"))
+    c = Constraints(exact_slides=5)
+    issues = validate_plan(plan, constraints=c)
+    assert any(i.kind == "slide_count_mismatch" for i in issues)
+
+
+def test_repair_deterministic_pads_to_exact_slide_count():
+    plan = _plan(SlideData(kind="title"), SlideData(kind="thanks"))
+    c = Constraints(exact_slides=5)
+    newp, fixed = repair_deterministic(plan, constraints=c)
+    assert len(newp.slides) == 5
+    # 结尾页仍然是结尾页，补的分隔页插在它前面
+    assert newp.slides[-1].kind == "thanks"
+    assert fixed >= 1
+
+
+def test_repair_deterministic_trims_to_exact_slide_count():
+    plan = _plan(
+        SlideData(kind="title"),
+        SlideData(kind="bullets", title="a", bullets=["1"]),
+        SlideData(kind="bullets", title="b", bullets=["1"]),
+        SlideData(kind="bullets", title="c", bullets=["1"]),
+        SlideData(kind="thanks"),
+    )
+    c = Constraints(exact_slides=2)
+    newp, fixed = repair_deterministic(plan, constraints=c)
+    assert len(newp.slides) == 2
+    # 结构页（title/thanks）优先于内容页保留
+    assert {s.kind for s in newp.slides} == {"title", "thanks"}
+    assert fixed >= 1
+
+
+def test_repair_deterministic_noop_when_already_exact():
+    plan = _plan(SlideData(kind="title"), SlideData(kind="thanks"))
+    c = Constraints(exact_slides=2)
+    newp, fixed = repair_deterministic(plan, constraints=c)
+    assert len(newp.slides) == 2

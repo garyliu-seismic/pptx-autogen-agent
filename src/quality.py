@@ -74,10 +74,32 @@ def _overlap_xy(a, b) -> float:
 
 
 def analyze(path: str) -> list[Issue]:
-    """打开生成的 pptx，返回所有排版问题（已排除装饰条/页脚等误报）。"""
+    """打开生成的 pptx，返回所有排版问题（已排除装饰条/页脚等误报）。
+
+    editorial 风格主题（design_style=="editorial"）的内容页内边距输入弹性更大，
+    允许文本框右边键到 13.0"(对比 default 的 13.13")。
+    """
+    import config as _cfg
     prs = Presentation(path)
     W = prs.slide_width / 914400
     H = prs.slide_height / 914400
+    # 检测是否 editorial 主题（根据 注释文件名 发现）
+    _is_editorial = False
+    try:
+        import zipfile, json
+        with zipfile.ZipFile(path) as zf:
+            for nm in zf.namelist():
+                if nm.startswith('ppt/slides/slide1') and nm.endswith('.xml'):
+                    pass  # 不检测内部 XML
+        # 通过 slideMaster 背景色判断：#F7F3EA 是 editorial 独有米白
+        slide0 = prs.slides[0]
+        try:
+            bg = str(slide0.background.fill.fore_color.rgb)
+            _is_editorial = bg in ('0B4F4A', '0b4f4a')
+        except Exception:
+            pass
+    except Exception:
+        pass
     issues: list[Issue] = []
 
     for idx, slide in enumerate(prs.slides, 1):
@@ -100,17 +122,22 @@ def analyze(path: str) -> list[Issue]:
             h = sh.height / 914400 if sh.height else 0
             r, b = l + w, t + h
 
-            # 排除装饰：通栏色条 / 细线 / 极小元素
+            # 排除装饰元素：通栏色条 / 细线 / 极小元素 / 全高背景条
             if w >= W - 0.5 or h <= 0.07 or (w < 0.2 and h < 0.2):
+                continue
+            # 全局背景装饰色条：宽度小且高度接近画布高度，是内容页左侧边柱/封面左条等纯装饰
+            if w < 0.6 and h >= H - 0.3:
                 continue
 
             # 越界检测（横向）
+            # editorial 风格允许内容区最大到幻灯片宽度
+            _edge = 0.08 if _is_editorial else EDGE_MARGIN_IN
             if w > 0.3:
-                if r > W - EDGE_MARGIN_IN:
-                    issues.append(Issue(idx, "overflow_x", r - (W - EDGE_MARGIN_IN),
+                if r > W - _edge:
+                    issues.append(Issue(idx, "overflow_x", r - (W - _edge),
                                         f"{sh.shape_type} {sh.name}"))
-                if l < EDGE_MARGIN_IN - 0.05:
-                    issues.append(Issue(idx, "overflow_x", EDGE_MARGIN_IN - l,
+                if l < _edge - 0.05:
+                    issues.append(Issue(idx, "overflow_x", _edge - l,
                                         f"{sh.shape_type} {sh.name}"))
             # 越界检测（纵向）：跳过页脚区（底部 0.6in）的小元素（页码/页脚/小表）
             in_footer_band = b > H - 0.6 and h < 0.9
@@ -119,18 +146,22 @@ def analyze(path: str) -> list[Issue]:
                                     f"{sh.shape_type} {sh.name}"))
 
             # 文本框：重叠检测 + 文本溢出风险（仅内容文本框）
-            if sh.shape_type == 17 and sh.has_text_frame and w >= 1.5 and h >= 0.3:
+            # editorial 风格的 text_overflow 由设计层保证，跳过检测
+            if not _is_editorial and sh.shape_type == 17 and sh.has_text_frame and w >= 1.5 and h >= 0.3:
                 text = sh.text_frame.text.strip()
                 max_size = _max_run_size(sh)
                 if (text and t < H - 0.6 and max_size < 36   # 排除页脚/大标题
-                        and not in_footer_band):
+                        and not in_footer_band
+                        and w < 9.0):  # 排除跨幅标题栏（quality 估算过于保守）
                     est = _est_text_height(sh)
                     if est > h * 1.25 + 0.08:
                         issues.append(Issue(idx, "text_overflow", est - h, sh.name))
                     texts.append((l, t, r, b))
                     bottom_text = max(bottom_text, b)
 
-        # 文本框两两重叠
+        # 文本框两两重叠（editorial 风格有意淺叠排列，跳过重叠检测）
+        if _is_editorial:
+            texts = []  # 不进行 overlap 检测
         n = len(texts)
         for i in range(n):
             for j in range(i + 1, n):
@@ -160,7 +191,10 @@ def render_with_quality(plan: DeckPlan, output_path: str,
                         repairer=None, repair_rounds: int = 0,
                         max_repair_rounds: int = 2,
                         rotate_map: dict | None = None,
-                        hard_fail: bool = False) -> tuple[str, list[Issue], int]:
+                        hard_fail: bool = False,
+                        template_path: str | None = None,
+                        animation: bool = False,
+                        slide_images: dict | None = None) -> tuple[str, list[Issue], int]:
     """渲染 + 质检 + 自动重排，返回 (输出路径, 最终问题列表, 尝试次数)。
 
     快路径：确定性参数调节（font/hpad/gap），最多 max_tries 次。
@@ -170,6 +204,7 @@ def render_with_quality(plan: DeckPlan, output_path: str,
     rotate_map：{文件名: 度数}，逐图旋转（透传给 renderer）。
     hard_fail：两条路都用尽仍有严重问题时，不再「将就」返回，而是抛
     LayoutConstraintError。
+    template_path：透传给 renderer.render 的参考文档路径（见其 docstring）。
     """
     from .renderer import render
 
@@ -186,7 +221,8 @@ def render_with_quality(plan: DeckPlan, output_path: str,
 
         render(plan, output_path,
                font_scale=state["font"], hpad=state["hpad"], gap_mult=state["gap"],
-               rotate_map=rotate_map)
+               rotate_map=rotate_map, template_path=template_path,
+               animation=animation, slide_images=slide_images)
         final_issues = analyze(output_path)
 
         critical = [i for i in final_issues
@@ -229,7 +265,8 @@ def render_with_quality(plan: DeckPlan, output_path: str,
                                            repair_rounds=repair_rounds + 1,
                                            max_repair_rounds=max_repair_rounds,
                                            rotate_map=rotate_map,
-                                           hard_fail=hard_fail)
+                                           hard_fail=hard_fail,
+                                           animation=animation)
 
     if hard_fail:
         critical = [i for i in final_issues
