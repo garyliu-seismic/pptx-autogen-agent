@@ -45,6 +45,22 @@ python main.py --input input -o output/deck.pptx --llm --planner
 > python main.py --input input -o output/deck.pptx --llm
 > ```
 
+### LLMG 模式（可选，Seismic LLM Gateway）
+
+同时设置以下环境变量（或写入 `.env`，已被 gitignore）即启用；不设置则行为不变：
+
+| 变量 | 说明 |
+|---|---|
+| `LLMG_BASE_URL` | 网关基址，请求发往 `{base}/v1/chat/completions`。QA 形式：`https://gateway-qa-az-westus-wombat.seismic-dev.com/llmg`（来自笔记，未验证） |
+| `LLMG_TOKEN` | 委托令牌（scope `aiml_llm`，约 30 分钟过期，需手动获取）；也可用 `LLMG_TOKEN_FILE` 指向存放令牌的文件。令牌不会写入日志 |
+| `LLMG_FEATURE_ID` | 每个请求携带的 `featureId`，默认 `demo` |
+| `LLMG_MODEL` | LLMG 模型 id，如 `gpt-5-mini-2025-08-07`、`gpt-5.4-2026-03-05` |
+
+- 请求体使用 LLMG 形状：`featureId`、`maxTokens`、多模态 `contents[]`+`imageUrl`、`responseFormat.jsonSchema`；响应经归一化后交给原有逻辑。
+- 429/503 最多重试 2 次（优先 `Retry-After`，否则 1s/2s 退避）；非 2xx 会在 stderr 打一行 `[llmg] HTTP <状态> ...`，随后仍回退到启发式。
+- 可手动运行 `python tools/llmg_probe.py` 探测 QA（文本/tools/图片/json schema/无 featureId，仅打印状态与短片段）。
+- 合规提醒：提示词与图片会经过 LLMG（SEB topics，留存策略未知），请先用非敏感样例。
+
 ## 质量闭环（P0）
 
 - **渲染前规划质检（默认开启）**：校验页数/要点条数/要点长度/空壳页/图表数据/图片存在性/主题名，
