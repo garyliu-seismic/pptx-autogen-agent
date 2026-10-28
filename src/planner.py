@@ -197,6 +197,27 @@ PLAN_TOOLS: list[dict] = [
 _ALLOWED_CHART = ("column", "bar", "line", "pie")
 
 
+def _tighten(schema):
+    """递归给所有 object schema 加 additionalProperties=false（禁止模型塞未定义字段）。
+
+    不强制「全部字段 required」也不设 strict=true：notes/subtitle/source_ref 等字段
+    本就是可选的，且 strict 模式在 Ollama/DeepSeek 等兼容端点上不被支持。
+    """
+    if isinstance(schema, dict):
+        for v in schema.values():
+            _tighten(v)
+        if schema.get("type") == "object" and "properties" in schema:
+            schema["additionalProperties"] = False
+    elif isinstance(schema, list):
+        for v in schema:
+            _tighten(v)
+    return schema
+
+
+for _t in PLAN_TOOLS:
+    _tighten(_t["function"]["parameters"])
+
+
 def execute_tool(plan: DeckPlan, name: str, args: dict,
                  locked_theme: str | None = None) -> str:
     """执行一个计划级工具调用，就地修改 plan。返回描述；ERROR 开头的表示参数非法。
@@ -359,6 +380,21 @@ def execute_tool(plan: DeckPlan, name: str, args: dict,
 # ---------------------------------------------------------------------------
 # 上下文构建器 + few-shot（Phase F）
 # ---------------------------------------------------------------------------
+GROUNDING_RULE = (
+    "═══ GROUNDING RULE（严格遵守）═══\n"
+    "• 所有页面内容只能依据用户提供的素材（以及 web_search 回传的结果），"
+    "不得使用素材之外的知识。\n"
+    "• 严禁编造数字、事实、人名、产品声明或统计数据；也不要为凑页数而虚构要点。"
+    "素材不足就少建页，而不是编造。\n"
+    "• 表格单元格、图表数值、KPI 数字必须逐一能在素材中找到，"
+    "并在 add_table/add_chart 的 source_ref 中注明来源。\n"
+    "• 每一条事实性陈述都必须能追溯到素材。\n"
+    "• 文本规范：页标题 3~7 个词（中文约 6~16 字）的纯文本；"
+    "要点为简短纯文本，各条分开写（不要在一条里用换行拼多条）；"
+    "文本值中禁止 Markdown/HTML（不要 * # - < > 等标记符号，不要项目符号前缀）。\n"
+)
+
+
 def build_system_prompt() -> str:
     themes_str = "、".join(
         f"{k}({v.name})" for k, v in config.THEMES.items()
@@ -371,9 +407,10 @@ def build_system_prompt() -> str:
         "1. 只能通过工具创建页；先 set_title + set_theme，再逐页添加内容，"
         "最后 add_thanks + done。不要输出工具以外的文字。\n"
         f"2. 每页要点最多 {MAX_BULLETS} 条、每条≤40字；内容超量时宁可拆成多页。\n"
-        "3. 画布 16:9（13.33×7.5 英寸）。不要编造素材里没有的数据；"
-        "表格/图表/KPI 数字必须来自素材。\n"
+        "3. 画布 16:9（13.33×7.5 英寸）。\n"
         "4. 素材信息不足时可调用 web_search 补充背景事实（结果会回传）。\n\n"
+
+        + GROUNDING_RULE + "\n"
 
         "═══ 版式选择决策树（每次建页前必须判断）═══\n"
         "• 含明确数字指标（百分比/金额/用户数等）→ add_kpi\n"

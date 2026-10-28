@@ -59,6 +59,9 @@ def main() -> int:
                     help="输出 PPTX 后额外导出 PDF（需安装 LibreOffice）")
     ap.add_argument("--preview", action="store_true",
                     help="生成后用 LibreOffice 渲染每页 PNG 预览（需安装 LibreOffice）")
+    ap.add_argument("--visual-qa", action="store_true",
+                    help="视觉 QA（需 --llm 与多模态模型 + LibreOffice）：渲染缩略图交给多模态 LLM "
+                         "判定溢出/重叠/裁切，失败理由回灌修复器（默认关闭）")
     ap.add_argument("--no-plan-qa", action="store_true",
                     help="跳过渲染前规划校验与修复（默认开启）")
     ap.add_argument("--no-readback", action="store_true",
@@ -225,6 +228,13 @@ def main() -> int:
 
     repairer = repair_render_with_llm if args.llm else None
     hard_fail = bool(constraints and constraints.hard_fail_on_layout)
+    visual_checker = None
+    if args.visual_qa:
+        if not args.llm:
+            print("[视觉QA] 需要同时指定 --llm，已忽略 --visual-qa")
+        else:
+            from src.visual_qa import make_visual_checker
+            visual_checker = make_visual_checker()
     # 有参考文档时顺带把它的真实 slide layout 当底稿用（画布尺寸+母版背景/logo等）
     template_path = ref.source_path if ref else None
     try:
@@ -232,7 +242,8 @@ def main() -> int:
                                                  rotate_map=rotate_map, hard_fail=hard_fail,
                                                  template_path=template_path,
                                                  animation=args.animation,
-                                                 slide_images=slide_images)
+                                                 slide_images=slide_images,
+                                                 visual_checker=visual_checker)
     except LayoutConstraintError as e:
         print(f"[错误] 版式约束未通过（hard_fail_on_layout）：{e}")
         return 1
@@ -252,7 +263,8 @@ def main() -> int:
                         plan, args.output, repairer=repairer,
                         rotate_map=rotate_map, hard_fail=hard_fail,
                         template_path=template_path,
-                        animation=args.animation)
+                        animation=args.animation,
+                        visual_checker=visual_checker)
                 except LayoutConstraintError as e:
                     print(f"[错误] 版式约束未通过（hard_fail_on_layout）：{e}")
                     return 1

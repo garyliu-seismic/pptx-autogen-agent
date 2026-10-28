@@ -194,7 +194,9 @@ def render_with_quality(plan: DeckPlan, output_path: str,
                         hard_fail: bool = False,
                         template_path: str | None = None,
                         animation: bool = False,
-                        slide_images: dict | None = None) -> tuple[str, list[Issue], int]:
+                        slide_images: dict | None = None,
+                        visual_checker=None, visual_rounds: int = 0,
+                        max_visual_rounds: int = 2) -> tuple[str, list[Issue], int]:
     """渲染 + 质检 + 自动重排，返回 (输出路径, 最终问题列表, 尝试次数)。
 
     快路径：确定性参数调节（font/hpad/gap），最多 max_tries 次。
@@ -205,6 +207,11 @@ def render_with_quality(plan: DeckPlan, output_path: str,
     hard_fail：两条路都用尽仍有严重问题时，不再「将就」返回，而是抛
     LayoutConstraintError。
     template_path：透传给 renderer.render 的参考文档路径（见其 docstring）。
+    visual_checker：可选（opt-in）视觉 QA，checker(pptx_path, plan) -> list[Issue]
+    （见 visual_qa.make_visual_checker：缩略图 -> 多模态 LLM 判定 pass/fail）。
+    几何质检通过后调用；判定失败且有 repairer 时，把 kind="visual" 的 Issue（含 LLM
+    给出的原因与缩短建议）回灌 repairer 重排，最多 max_visual_rounds 轮；
+    用尽后仍失败只提示、不阻塞（不参与 hard_fail）。默认 None = 行为不变。
     """
     from .renderer import render
 
@@ -238,6 +245,25 @@ def render_with_quality(plan: DeckPlan, output_path: str,
                 state = {"font": 1.12, "hpad": max(0.0, state["hpad"] * 0.5),
                          "gap": 1.2}
                 continue
+            if visual_checker is not None and repairer is not None:
+                v_issues = visual_checker(output_path, plan)
+                if v_issues and visual_rounds < max_visual_rounds:
+                    if not quiet:
+                        print(f"  [视觉QA] 判定未通过（{len(v_issues)} 页），回灌修复"
+                              f"（第 {visual_rounds + 1}/{max_visual_rounds} 轮）…")
+                    new_plan = repairer(plan, v_issues)
+                    if new_plan is not None:
+                        return render_with_quality(
+                            new_plan, output_path, max_tries=max_tries, quiet=quiet,
+                            repairer=repairer, repair_rounds=repair_rounds,
+                            max_repair_rounds=max_repair_rounds,
+                            rotate_map=rotate_map, hard_fail=hard_fail,
+                            template_path=template_path, animation=animation,
+                            slide_images=slide_images, visual_checker=visual_checker,
+                            visual_rounds=visual_rounds + 1,
+                            max_visual_rounds=max_visual_rounds)
+                if v_issues:   # 轮数用尽/修复器无结果：只提示，不阻塞
+                    final_issues = final_issues + v_issues
             return output_path, final_issues, attempt
 
         # 有问题 -> 收紧：缩小字号、加大留白防溢出、压缩间距
@@ -266,7 +292,10 @@ def render_with_quality(plan: DeckPlan, output_path: str,
                                            max_repair_rounds=max_repair_rounds,
                                            rotate_map=rotate_map,
                                            hard_fail=hard_fail,
-                                           animation=animation)
+                                           animation=animation,
+                                           visual_checker=visual_checker,
+                                           visual_rounds=visual_rounds,
+                                           max_visual_rounds=max_visual_rounds)
 
     if hard_fail:
         critical = [i for i in final_issues

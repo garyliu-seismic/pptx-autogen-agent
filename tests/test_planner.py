@@ -163,3 +163,26 @@ def test_web_search_all_fail_degrades(monkeypatch):
     monkeypatch.setattr(P, "_wikipedia_zh_search", lambda q, **kw: None)
     r = P._web_search("q")
     assert "无结果或网络不通" in r
+
+
+def test_system_prompt_has_grounding_rule():
+    sp = P.build_system_prompt()
+    assert "GROUNDING RULE" in sp
+    assert "严禁编造数字" in sp and "source_ref" in sp
+    assert "Markdown/HTML" in sp and "3~7" in sp
+
+
+def test_tool_schemas_reject_additional_properties():
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("type") == "object" and "properties" in node:
+                assert node.get("additionalProperties") is False, node
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+    for t in P.PLAN_TOOLS:
+        walk(t["function"]["parameters"])
+    names = {t["function"]["name"] for t in P.PLAN_TOOLS}
+    assert {"add_table", "add_chart", "add_kpi"} <= names
